@@ -42,7 +42,8 @@ export const dungeonRunApi = {
 
 // ---- Equipments ----
 export const equipmentApi = {
-  list: () => client.get('/equipments'),
+  list: (includeInactive = false) =>
+    client.get('/equipments', { params: { include_inactive: includeInactive } }),
   create: (data: any) => client.post('/equipments', data),
   get: (id: number) => client.get(`/equipments/${id}`),
   update: (id: number, data: any) => client.patch(`/equipments/${id}`, data),
@@ -51,7 +52,8 @@ export const equipmentApi = {
 
 // ---- Recipes ----
 export const recipeApi = {
-  list: () => client.get('/recipes'),
+  list: (includeInactive = false) =>
+    client.get('/recipes', { params: { include_inactive: includeInactive } }),
   create: (data: any) => client.post('/recipes', data),
   get: (id: number) => client.get(`/recipes/${id}`),
   update: (id: number, data: any) => client.put(`/recipes/${id}`, data),

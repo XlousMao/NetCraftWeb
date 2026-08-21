@@ -8,13 +8,18 @@ const equipments = ref<any[]>([])
 const items = ref<any[]>([])
 const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)
+const showInactive = ref(false)
 const form = ref<any>({ name: '', description: '', repair_requirements: [] })
 const currentReq = ref({ item_id: null, quantity: 1 })
 
 const dialogTitle = computed(() => (editingId.value ? '编辑装备' : '新建装备'))
+const filteredEquipments = computed(() => {
+  if (showInactive.value) return equipments.value
+  return equipments.value.filter(e => e.is_active)
+})
 
 async function fetch() {
-  const { data } = await equipmentApi.list()
+  const { data } = await equipmentApi.list(true)
   equipments.value = data.items
 }
 
@@ -73,9 +78,9 @@ async function save() {
 
 async function remove(row: any) {
   try {
-    await ElMessageBox.confirm(`确定要停用装备「${row.name}」吗？`, '警告', { type: 'warning' })
+    await ElMessageBox.confirm(`确定要删除装备「${row.name}」吗？`, '警告', { type: 'warning' })
     await equipmentApi.remove(row.id)
-    ElMessage.success('装备已停用')
+    ElMessage.success('装备已删除')
     fetch()
   } catch {
     // 取消
@@ -88,10 +93,11 @@ async function remove(row: any) {
     <div class="toolbar">
       <h2 style="margin: 0">装备</h2>
       <div style="flex: 1"></div>
+      <el-checkbox v-model="showInactive" style="margin-right: 16px">显示已停用</el-checkbox>
       <el-button type="primary" @click="openCreate">新建装备</el-button>
     </div>
 
-    <el-table :data="equipments" style="margin-top: 16px">
+    <el-table :data="filteredEquipments" style="margin-top: 16px">
       <el-table-column prop="name" label="名称" width="180" />
       <el-table-column label="维修材料">
         <template #default="{ row }">
@@ -99,10 +105,15 @@ async function remove(row: any) {
           <span v-if="!row.repair_requirements || row.repair_requirements.length === 0" class="text-muted">无</span>
         </template>
       </el-table-column>
+      <el-table-column label="状态" width="90">
+        <template #default="{ row }">
+          <el-tag :type="row.is_active ? 'success' : 'info'" size="small">{{ row.is_active ? '启用' : '停用' }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="130">
         <template #default="{ row }">
           <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" text type="danger" @click="remove(row)">停用</el-button>
+          <el-button size="small" text type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

@@ -8,14 +8,19 @@ const recipes = ref<any[]>([])
 const items = ref<any[]>([])
 const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)
+const showInactive = ref(false)
 const form = ref<any>({ name: '', category: '炼金', expected_success_rate: 0.9, materials: [], outputs: [] })
 const currentMat = ref({ item_id: null, quantity: 1 })
 const currentOut = ref({ item_id: null, quantity: 1 })
 
 const dialogTitle = computed(() => (editingId.value ? '编辑配方' : '新建配方'))
+const filteredRecipes = computed(() => {
+  if (showInactive.value) return recipes.value
+  return recipes.value.filter(r => r.is_active)
+})
 
 async function fetch() {
-  const { data } = await recipeApi.list()
+  const { data } = await recipeApi.list(true)
   recipes.value = data.items
 }
 
@@ -82,9 +87,9 @@ async function save() {
 
 async function remove(row: any) {
   try {
-    await ElMessageBox.confirm(`确定要停用配方「${row.name}」吗？`, '警告', { type: 'warning' })
+    await ElMessageBox.confirm(`确定要删除配方「${row.name}」吗？`, '警告', { type: 'warning' })
     await recipeApi.remove(row.id)
-    ElMessage.success('配方已停用')
+    ElMessage.success('配方已删除')
     fetch()
   } catch {
     // 取消
@@ -97,10 +102,11 @@ async function remove(row: any) {
     <div class="toolbar">
       <h2 style="margin: 0">炼金 / 配方</h2>
       <div style="flex: 1"></div>
+      <el-checkbox v-model="showInactive" style="margin-right: 16px">显示已停用</el-checkbox>
       <el-button type="primary" @click="openCreate">新建配方</el-button>
     </div>
 
-    <el-table :data="recipes" style="margin-top: 16px">
+    <el-table :data="filteredRecipes" style="margin-top: 16px">
       <el-table-column prop="name" label="配方" width="160" />
       <el-table-column prop="category" label="分类" width="90" />
       <el-table-column label="材料" min-width="200">
@@ -119,7 +125,7 @@ async function remove(row: any) {
       <el-table-column label="操作" width="130">
         <template #default="{ row }">
           <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" text type="danger" @click="remove(row)">停用</el-button>
+          <el-button size="small" text type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

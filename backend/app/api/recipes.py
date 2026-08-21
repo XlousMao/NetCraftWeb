@@ -48,8 +48,12 @@ def _recipe_out(db: Session, r: Recipe) -> RecipeOut:
 
 
 @router.get("", response_model=dict)
-def list_recipes(db: Session = Depends(get_db)):
-    rows = db.execute(select(Recipe).order_by(Recipe.name)).scalars().all()
+def list_recipes(include_inactive: bool = Query(False), db: Session = Depends(get_db)):
+    """配方列表。默认只返回启用配方；include_inactive=true 返回全部。"""
+    stmt = select(Recipe).order_by(Recipe.name)
+    if not include_inactive:
+        stmt = stmt.where(Recipe.is_active.is_(True))
+    rows = db.execute(stmt).scalars().all()
     return {"total": len(rows), "items": [_recipe_out(db, r).model_dump() for r in rows]}
 
 

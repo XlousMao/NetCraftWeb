@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -31,8 +31,12 @@ def _equipment_out(db: Session, eq: Equipment) -> EquipmentOut:
 
 
 @router.get("", response_model=dict)
-def list_equipments(db: Session = Depends(get_db)):
-    rows = db.execute(select(Equipment).order_by(Equipment.name)).scalars().all()
+def list_equipments(include_inactive: bool = Query(False), db: Session = Depends(get_db)):
+    """装备列表。默认只返回启用装备；include_inactive=true 返回全部。"""
+    stmt = select(Equipment).order_by(Equipment.name)
+    if not include_inactive:
+        stmt = stmt.where(Equipment.is_active.is_(True))
+    rows = db.execute(stmt).scalars().all()
     return {"total": len(rows), "items": [_equipment_out(db, e).model_dump() for e in rows]}
 
 
