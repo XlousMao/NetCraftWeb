@@ -26,6 +26,16 @@ class ActivityRecordCreate(BaseModel):
     notes: Optional[str] = None
 
 
+class ActivityRecordUpdate(BaseModel):
+    activity_type: Optional[str] = None
+    label: Optional[str] = None
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    gross_value: Optional[float] = None
+    total_cost: Optional[float] = None
+    notes: Optional[str] = None
+
+
 class ActivityRecordOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

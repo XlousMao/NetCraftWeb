@@ -24,6 +24,7 @@ def _equipment_out(db: Session, eq: Equipment) -> EquipmentOut:
     for r in eq.repair_requirements:
         ro = RepairRequirementOut.model_validate(r)
         ro.item_name = r.item.name if r.item else None
+        ro.icon_url = r.item.icon_url if r.item else None
         reqs.append(ro)
     out.repair_requirements = reqs
     return out
@@ -77,8 +78,26 @@ def update_equipment(equipment_id: int, payload: EquipmentUpdate, db: Session = 
     eq = db.get(Equipment, equipment_id)
     if eq is None:
         raise HTTPException(404, "装备不存在")
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True, exclude={"repair_requirements"})
+    for k, v in data.items():
         setattr(eq, k, v)
+    # 更新维修需求（若提供）
+    if payload.repair_requirements is not None:
+        for r in list(eq.repair_requirements):
+            db.delete(r)
+        db.flush()
+        for req in payload.repair_requirements:
+            db.add(
+                EquipmentRepairRequirement(
+                    equipment_id=eq.id,
+                    item_id=req.item_id,
+                    quantity=req.quantity,
+                )
+            )
+        db.flush()
+        from app.services.relation import RelationService
+
+        RelationService(db).sync_equipment(eq)
     db.commit()
     db.refresh(eq)
     return _equipment_out(db, eq)

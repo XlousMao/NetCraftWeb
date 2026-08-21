@@ -18,6 +18,7 @@ class RepairRequirementOut(BaseModel):
     equipment_id: int
     item_id: int
     item_name: Optional[str] = None
+    icon_url: Optional[str] = None
     quantity: float
 
 
@@ -33,6 +34,7 @@ class EquipmentUpdate(BaseModel):
     description: Optional[str] = None
     icon_url: Optional[str] = None
     is_active: Optional[bool] = None
+    repair_requirements: Optional[List[RepairRequirementCreate]] = None
 
 
 class EquipmentOut(BaseModel):

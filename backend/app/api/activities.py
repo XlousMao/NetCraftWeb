@@ -8,7 +8,12 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.activity import Activity, ActivityRecord
-from app.schemas.activity import ActivityOut, ActivityRecordCreate, ActivityRecordOut
+from app.schemas.activity import (
+    ActivityOut,
+    ActivityRecordCreate,
+    ActivityRecordOut,
+    ActivityRecordUpdate,
+)
 from app.services.activity import ActivityService
 
 router = APIRouter(prefix="/activities", tags=["activities"])
@@ -64,3 +69,37 @@ def create_record(payload: ActivityRecordCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(record)
     return ActivityRecordOut.model_validate(record)
+
+
+@router.put("/records/{record_id}", response_model=ActivityRecordOut)
+def update_record(record_id: int, payload: ActivityRecordUpdate, db: Session = Depends(get_db)):
+    record = db.get(ActivityRecord, record_id)
+    if record is None:
+        raise HTTPException(404, "活动记录不存在")
+    data = payload.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(record, k, v)
+    # 重算净收益与每小时收益
+    from app.analysis.economy_calculator import calculate_profit_per_hour
+
+    record.net_profit = record.gross_value - record.total_cost
+    duration = (
+        (record.ended_at - record.started_at).total_seconds() / 60
+        if record.ended_at and record.ended_at > record.started_at
+        else 0
+    )
+    record.duration_minutes = duration
+    record.profit_per_hour = calculate_profit_per_hour(record.net_profit, duration)
+    db.commit()
+    db.refresh(record)
+    return ActivityRecordOut.model_validate(record)
+
+
+@router.delete("/records/{record_id}", status_code=204)
+def delete_record(record_id: int, db: Session = Depends(get_db)):
+    record = db.get(ActivityRecord, record_id)
+    if record is None:
+        raise HTTPException(404, "活动记录不存在")
+    db.delete(record)
+    db.commit()
+    return None

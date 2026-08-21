@@ -20,6 +20,7 @@ from app.schemas.recipe import (
     RecipeMaterialOut,
     RecipeOut,
     RecipeOutputOut,
+    RecipeUpdate,
 )
 from app.services.recipe import RecipeService
 
@@ -33,11 +34,13 @@ def _recipe_out(db: Session, r: Recipe) -> RecipeOut:
     for m in r.materials:
         mo = RecipeMaterialOut.model_validate(m)
         mo.item_name = m.item.name if m.item else None
+        mo.icon_url = m.item.icon_url if m.item else None
         mats.append(mo)
     outs = []
     for o in r.outputs:
         oo = RecipeOutputOut.model_validate(o)
         oo.item_name = o.item.name if o.item else None
+        oo.icon_url = o.item.icon_url if o.item else None
         outs.append(oo)
     out.materials = mats
     out.outputs = outs
@@ -92,6 +95,47 @@ def recipe_analysis(recipe_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, str(exc))
 
 
+@router.put("/{recipe_id}", response_model=RecipeOut)
+def update_recipe(recipe_id: int, payload: RecipeUpdate, db: Session = Depends(get_db)):
+    r = db.get(Recipe, recipe_id)
+    if r is None:
+        raise HTTPException(404, "配方不存在")
+    data = payload.model_dump(exclude_unset=True, exclude={"materials", "outputs"})
+    for k, v in data.items():
+        setattr(r, k, v)
+    # 更新材料/产出（若提供）
+    if payload.materials is not None:
+        for m in list(r.materials):
+            db.delete(m)
+        db.flush()
+        for m in payload.materials:
+            db.add(RecipeMaterial(recipe_id=r.id, item_id=m.item_id, quantity=m.quantity))
+    if payload.outputs is not None:
+        for o in list(r.outputs):
+            db.delete(o)
+        db.flush()
+        for o in payload.outputs:
+            db.add(RecipeOutput(recipe_id=r.id, item_id=o.item_id, quantity=o.quantity))
+    if payload.materials is not None or payload.outputs is not None:
+        db.flush()
+        from app.services.relation import RelationService
+
+        RelationService(db).sync_recipe(r)
+    db.commit()
+    db.refresh(r)
+    return _recipe_out(db, r)
+
+
+@router.delete("/{recipe_id}", status_code=204)
+def delete_recipe(recipe_id: int, db: Session = Depends(get_db)):
+    r = db.get(Recipe, recipe_id)
+    if r is None:
+        raise HTTPException(404, "配方不存在")
+    r.is_active = False
+    db.commit()
+    return None
+
+
 # ---- Production Records ----
 
 def _prod_out(db: Session, p: ProductionRecord) -> ProductionRecordOut:
@@ -142,3 +186,30 @@ def list_production_records(
         "page_size": page_size,
         "items": [_prod_out(db, p).model_dump() for p in rows],
     }
+
+
+@prod_router.put("/{record_id}", response_model=ProductionRecordOut)
+def update_production_record(
+    record_id: int, payload: ProductionRecordCreate, db: Session = Depends(get_db)
+):
+    try:
+        record = RecipeService(db).update_production_record(record_id, payload)
+        db.commit()
+        db.refresh(record)
+        return _prod_out(db, record)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc))
+
+
+@prod_router.delete("/{record_id}", status_code=204)
+def delete_production_record(record_id: int, db: Session = Depends(get_db)):
+    record = db.get(ProductionRecord, record_id)
+    if record is None:
+        raise HTTPException(404, "生产记录不存在")
+    from app.services.activity import ActivityService
+
+    ActivityService(db).delete_by_ref("production_record", record_id)
+    db.delete(record)
+    db.commit()
+    return None

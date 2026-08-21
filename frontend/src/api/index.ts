@@ -45,6 +45,7 @@ export const equipmentApi = {
   list: () => client.get('/equipments'),
   create: (data: any) => client.post('/equipments', data),
   get: (id: number) => client.get(`/equipments/${id}`),
+  update: (id: number, data: any) => client.patch(`/equipments/${id}`, data),
   remove: (id: number) => client.delete(`/equipments/${id}`),
 }
 
@@ -53,12 +54,16 @@ export const recipeApi = {
   list: () => client.get('/recipes'),
   create: (data: any) => client.post('/recipes', data),
   get: (id: number) => client.get(`/recipes/${id}`),
+  update: (id: number, data: any) => client.put(`/recipes/${id}`, data),
+  remove: (id: number) => client.delete(`/recipes/${id}`),
   analysis: (id: number) => client.get(`/recipes/${id}/analysis`),
 }
 
 export const productionApi = {
   list: (params: any) => client.get('/production-records', { params }),
   create: (data: any) => client.post('/production-records', data),
+  update: (id: number, data: any) => client.put(`/production-records/${id}`, data),
+  remove: (id: number) => client.delete(`/production-records/${id}`),
 }
 
 // ---- Activities ----
@@ -66,6 +71,8 @@ export const activityApi = {
   list: () => client.get('/activities'),
   records: (params: any) => client.get('/activities/records', { params }),
   createRecord: (data: any) => client.post('/activities/records', data),
+  updateRecord: (id: number, data: any) => client.put(`/activities/records/${id}`, data),
+  removeRecord: (id: number) => client.delete(`/activities/records/${id}`),
 }
 
 // ---- Analysis / Dashboard / AI ----

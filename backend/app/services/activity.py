@@ -43,6 +43,40 @@ class ActivityService:
             )
         ).scalar_one_or_none()
 
+    def delete_by_ref(self, reference_type: str, reference_id: int) -> None:
+        """删除引用某业务实体的活动记录（如删除副本记录时同步）。"""
+        rows = self.db.execute(
+            select(ActivityRecord).where(
+                ActivityRecord.reference_type == reference_type,
+                ActivityRecord.reference_id == reference_id,
+            )
+        ).scalars().all()
+        for r in rows:
+            self.db.delete(r)
+
+    def cleanup_orphans(self) -> int:
+        """清理引用已不存在业务实体的孤儿活动记录，返回删除数量。"""
+        from app.models.dungeon import DungeonRun
+        from app.models.recipe import ProductionRecord
+
+        removed = 0
+        rows = self.db.execute(
+            select(ActivityRecord).where(
+                ActivityRecord.reference_type.isnot(None)
+            )
+        ).scalars().all()
+        for r in rows:
+            exists = True
+            if r.reference_type == "dungeon_run":
+                exists = self.db.get(DungeonRun, r.reference_id) is not None
+            elif r.reference_type == "production_record":
+                exists = self.db.get(ProductionRecord, r.reference_id) is not None
+            if not exists:
+                self.db.delete(r)
+                removed += 1
+        self.db.flush()
+        return removed
+
     def sync_dungeon_run(self, run: DungeonRun) -> ActivityRecord:
         """副本完成后同步活动账本。"""
         existing = self._upsert_by_ref("dungeon_run", run.id)

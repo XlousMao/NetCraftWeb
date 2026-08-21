@@ -32,6 +32,7 @@ class RecipeMaterialOut(BaseModel):
     recipe_id: int
     item_id: int
     item_name: Optional[str] = None
+    icon_url: Optional[str] = None
     quantity: float
 
 
@@ -42,7 +43,18 @@ class RecipeOutputOut(BaseModel):
     recipe_id: int
     item_id: int
     item_name: Optional[str] = None
+    icon_url: Optional[str] = None
     quantity: float
+
+
+class RecipeUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    expected_success_rate: Optional[float] = Field(None, ge=0, le=1)
+    materials: Optional[List[RecipeMaterialIn]] = None
+    outputs: Optional[List[RecipeOutputIn]] = None
+    is_active: Optional[bool] = None
 
 
 class RecipeOut(BaseModel):

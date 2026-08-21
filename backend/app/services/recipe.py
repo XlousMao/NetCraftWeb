@@ -38,6 +38,47 @@ class RecipeService:
             total += v.base_currency_value
         return q_money(total)
 
+    def _compute_fields(
+        self,
+        recipe: Recipe,
+        attempted: int,
+        success: int,
+        started_at: datetime,
+        revenue: Optional[float],
+    ) -> dict:
+        """计算生产记录的全部派生字段（供创建/更新复用）。"""
+        fail = attempted - success
+        theoretical_unit = self._theoretical_unit_cost(recipe, started_at)
+        material_cost = q_money(theoretical_unit * Decimal(attempted))
+        actual_success_rate = calculate_success_rate(success, attempted)
+        actual_unit_cost = calculate_actual_unit_cost(material_cost, success)
+
+        if revenue is not None:
+            rev = q_money(Decimal(revenue))
+        else:
+            rev = Decimal(0)
+            for out in recipe.outputs:
+                v = self.valuation.value(
+                    out.item_id, Decimal(out.quantity) * success, "auto", started_at
+                )
+                rev += v.base_currency_value
+            rev = q_money(rev)
+
+        gross_profit = calculate_gross_profit(rev, material_cost)
+        roi = calculate_roi(gross_profit, material_cost)
+        return {
+            "attempted_count": attempted,
+            "success_count": success,
+            "fail_count": fail,
+            "material_cost": material_cost,
+            "actual_unit_cost": actual_unit_cost,
+            "revenue": rev,
+            "gross_profit": gross_profit,
+            "roi": roi,
+            "actual_success_rate": actual_success_rate,
+            "fiat_value": self.valuation.fiat.value(gross_profit, started_at),
+        }
+
     def create_production_record(self, payload: ProductionRecordCreate) -> ProductionRecord:
         recipe = self.db.get(Recipe, payload.recipe_id)
         if recipe is None:
@@ -45,47 +86,41 @@ class RecipeService:
 
         attempted = payload.attempted_count
         success = min(payload.success_count, attempted)
-        fail = attempted - success
-
-        # 材料总成本 = 理论单次成本（钻石）× 实际尝试次数
-        theoretical_unit = self._theoretical_unit_cost(recipe, payload.started_at)
-        material_cost = q_money(theoretical_unit * Decimal(attempted))
-
-        actual_success_rate = calculate_success_rate(success, attempted)
-        actual_unit_cost = calculate_actual_unit_cost(material_cost, success)
-
-        # 收入：优先用传入值（钻石），否则按产出物当前估值 × 成功数量
-        if payload.revenue is not None:
-            revenue = q_money(Decimal(payload.revenue))
-        else:
-            revenue = Decimal(0)
-            for out in recipe.outputs:
-                v = self.valuation.value(
-                    out.item_id, Decimal(out.quantity) * success, "auto", payload.started_at
-                )
-                revenue += v.base_currency_value
-            revenue = q_money(revenue)
-
-        gross_profit = calculate_gross_profit(revenue, material_cost)
-        roi = calculate_roi(gross_profit, material_cost)
+        fields = self._compute_fields(recipe, attempted, success, payload.started_at, payload.revenue)
 
         record = ProductionRecord(
             recipe_id=recipe.id,
             started_at=payload.started_at,
             ended_at=payload.ended_at or datetime.now(timezone.utc),
-            attempted_count=attempted,
-            success_count=success,
-            fail_count=fail,
-            material_cost=material_cost,
-            actual_unit_cost=actual_unit_cost,
-            revenue=revenue,
-            gross_profit=gross_profit,
-            roi=roi,
-            actual_success_rate=actual_success_rate,
-            fiat_value=self.valuation.fiat.value(gross_profit, payload.started_at),
             notes=payload.notes,
+            **fields,
         )
         self.db.add(record)
+        self.db.flush()
+
+        self.activity.sync_production_record(record)
+        return record
+
+    def update_production_record(
+        self, record_id: int, payload: ProductionRecordCreate
+    ) -> ProductionRecord:
+        record = self.db.get(ProductionRecord, record_id)
+        if record is None:
+            raise ValueError(f"生产记录 {record_id} 不存在")
+        recipe = self.db.get(Recipe, payload.recipe_id)
+        if recipe is None:
+            raise ValueError(f"配方 {payload.recipe_id} 不存在")
+
+        attempted = payload.attempted_count
+        success = min(payload.success_count, attempted)
+        fields = self._compute_fields(recipe, attempted, success, payload.started_at, payload.revenue)
+
+        record.recipe_id = recipe.id
+        record.started_at = payload.started_at
+        record.ended_at = payload.ended_at or datetime.now(timezone.utc)
+        record.notes = payload.notes
+        for k, v in fields.items():
+            setattr(record, k, v)
         self.db.flush()
 
         self.activity.sync_production_record(record)

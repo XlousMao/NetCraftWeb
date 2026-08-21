@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, computed, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { productionApi, recipeApi } from '@/api'
 
 const records = ref<any[]>([])
 const recipes = ref<any[]>([])
 const dialogVisible = ref(false)
+const editingId = ref<number | null>(null)
 const form = ref<any>({ recipe_id: null, started_at: new Date(), attempted_count: 100, success_count: 0 })
+
+const dialogTitle = computed(() => (editingId.value ? '编辑生产记录' : '新增生产记录'))
 
 async function fetch() {
   const { data } = await productionApi.list({ page_size: 50 })
@@ -19,19 +22,57 @@ onMounted(async () => {
   recipes.value = data.items
 })
 
+function resetForm() {
+  editingId.value = null
+  form.value = { recipe_id: null, started_at: new Date(), attempted_count: 100, success_count: 0 }
+}
+
+function openCreate() {
+  resetForm()
+  dialogVisible.value = true
+}
+
+function openEdit(row: any) {
+  editingId.value = row.id
+  form.value = {
+    recipe_id: row.recipe_id,
+    started_at: new Date(row.started_at),
+    attempted_count: row.attempted_count,
+    success_count: row.success_count,
+  }
+  dialogVisible.value = true
+}
+
 async function submit() {
   if (!form.value.recipe_id) {
     ElMessage.warning('请选择配方')
     return
   }
-  const { data } = await productionApi.create({
+  const payload = {
     ...form.value,
     started_at: new Date(form.value.started_at).toISOString(),
-  })
-  ElMessage.success(`实际成功率 ${(data.actual_success_rate * 100).toFixed(1)}%，ROI ${(data.roi * 100).toFixed(1)}%`)
+  }
+  if (editingId.value) {
+    const { data } = await productionApi.update(editingId.value, payload)
+    ElMessage.success(`已更新，实际成功率 ${(data.actual_success_rate * 100).toFixed(1)}%，ROI ${(data.roi * 100).toFixed(1)}%`)
+  } else {
+    const { data } = await productionApi.create(payload)
+    ElMessage.success(`实际成功率 ${(data.actual_success_rate * 100).toFixed(1)}%，ROI ${(data.roi * 100).toFixed(1)}%`)
+  }
   dialogVisible.value = false
-  form.value = { recipe_id: null, started_at: new Date(), attempted_count: 100, success_count: 0 }
+  resetForm()
   fetch()
+}
+
+async function remove(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定要删除这条生产记录吗？`, '警告', { type: 'warning' })
+    await productionApi.remove(row.id)
+    ElMessage.success('生产记录已删除')
+    fetch()
+  } catch {
+    // 取消
+  }
 }
 </script>
 
@@ -40,7 +81,7 @@ async function submit() {
     <div class="toolbar">
       <h2 style="margin: 0">生产记录</h2>
       <div style="flex: 1"></div>
-      <el-button type="primary" @click="dialogVisible = true">新增生产记录</el-button>
+      <el-button type="primary" @click="openCreate">新增生产记录</el-button>
     </div>
 
     <el-table :data="records" style="margin-top: 16px">
@@ -64,9 +105,15 @@ async function submit() {
           <span :class="row.roi >= 0 ? 'profit' : 'loss'">{{ (row.roi * 100).toFixed(1) }}%</span>
         </template>
       </el-table-column>
+      <el-table-column label="操作" width="130">
+        <template #default="{ row }">
+          <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button size="small" text type="danger" @click="remove(row)">删除</el-button>
+        </template>
+      </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" title="新增生产记录" width="480px">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="480px">
       <el-form label-width="90px">
         <el-form-item label="配方" required>
           <el-select v-model="form.recipe_id" style="width: 100%">

@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, computed, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { equipmentApi, itemApi } from '@/api'
+import ItemChip from '@/components/ItemChip.vue'
 
 const equipments = ref<any[]>([])
 const items = ref<any[]>([])
 const dialogVisible = ref(false)
+const editingId = ref<number | null>(null)
 const form = ref<any>({ name: '', description: '', repair_requirements: [] })
 const currentReq = ref({ item_id: null, quantity: 1 })
+
+const dialogTitle = computed(() => (editingId.value ? '编辑装备' : '新建装备'))
 
 async function fetch() {
   const { data } = await equipmentApi.list()
@@ -22,7 +26,7 @@ onMounted(async () => {
 
 function addReq() {
   if (!currentReq.value.item_id) return
-  form.value.repair_requirements.push({ ...currentReq.value, currency_cost: 0 })
+  form.value.repair_requirements.push({ item_id: currentReq.value.item_id, quantity: currentReq.value.quantity })
   currentReq.value = { item_id: null, quantity: 1 }
 }
 
@@ -30,16 +34,52 @@ function itemName(id: number) {
   return items.value.find((i) => i.id === id)?.name || `#${id}`
 }
 
-async function create() {
+function resetForm() {
+  editingId.value = null
+  form.value = { name: '', description: '', repair_requirements: [] }
+}
+
+function openCreate() {
+  resetForm()
+  dialogVisible.value = true
+}
+
+function openEdit(row: any) {
+  editingId.value = row.id
+  form.value = {
+    name: row.name,
+    description: row.description,
+    repair_requirements: (row.repair_requirements || []).map((r: any) => ({ item_id: r.item_id, quantity: r.quantity })),
+  }
+  dialogVisible.value = true
+}
+
+async function save() {
   if (!form.value.name.trim()) {
     ElMessage.warning('请输入装备名称')
     return
   }
-  await equipmentApi.create(form.value)
-  ElMessage.success('装备已创建')
+  if (editingId.value) {
+    await equipmentApi.update(editingId.value, form.value)
+    ElMessage.success('装备已更新')
+  } else {
+    await equipmentApi.create(form.value)
+    ElMessage.success('装备已创建')
+  }
   dialogVisible.value = false
-  form.value = { name: '', description: '', repair_requirements: [] }
+  resetForm()
   fetch()
+}
+
+async function remove(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定要停用装备「${row.name}」吗？`, '警告', { type: 'warning' })
+    await equipmentApi.remove(row.id)
+    ElMessage.success('装备已停用')
+    fetch()
+  } catch {
+    // 取消
+  }
 }
 </script>
 
@@ -48,21 +88,26 @@ async function create() {
     <div class="toolbar">
       <h2 style="margin: 0">装备</h2>
       <div style="flex: 1"></div>
-      <el-button type="primary" @click="dialogVisible = true">新建装备</el-button>
+      <el-button type="primary" @click="openCreate">新建装备</el-button>
     </div>
 
     <el-table :data="equipments" style="margin-top: 16px">
-      <el-table-column prop="name" label="名称" width="200" />
+      <el-table-column prop="name" label="名称" width="180" />
       <el-table-column label="维修材料">
         <template #default="{ row }">
-          <el-tag v-for="r in row.repair_requirements" :key="r.id" size="small" style="margin: 2px">
-            {{ r.item_name }} ×{{ r.quantity }}
-          </el-tag>
+          <ItemChip v-for="r in row.repair_requirements" :key="r.id" :name="r.item_name || '#' + r.item_id" :quantity="r.quantity" :icon-url="r.icon_url" />
+          <span v-if="!row.repair_requirements || row.repair_requirements.length === 0" class="text-muted">无</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="130">
+        <template #default="{ row }">
+          <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button size="small" text type="danger" @click="remove(row)">停用</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" title="新建装备" width="560px">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="560px">
       <el-form label-width="80px">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" />
@@ -84,7 +129,7 @@ async function create() {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="create">创建</el-button>
+        <el-button type="primary" @click="save">保存</el-button>
       </template>
     </el-dialog>
   </div>

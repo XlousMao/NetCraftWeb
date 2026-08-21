@@ -176,6 +176,9 @@ def delete_run(run_id: int, db: Session = Depends(get_db)):
     run = db.get(DungeonRun, run_id)
     if run is None:
         raise HTTPException(404, "副本记录不存在")
+    from app.services.activity import ActivityService
+
+    ActivityService(db).delete_by_ref("dungeon_run", run_id)
     db.delete(run)
     db.commit()
     return None

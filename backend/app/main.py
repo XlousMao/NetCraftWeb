@@ -25,6 +25,11 @@ async def lifespan(app: FastAPI):
     try:
         ActivityService(db).ensure_activity_types()
         db.commit()
+        # 清理引用已不存在副本/生产记录的孤儿活动记录
+        removed = ActivityService(db).cleanup_orphans()
+        db.commit()
+        if removed:
+            print(f"[startup] 清理孤儿活动记录 {removed} 条")
     finally:
         db.close()
     yield

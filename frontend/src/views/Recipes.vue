@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, computed, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { recipeApi, itemApi } from '@/api'
+import ItemChip from '@/components/ItemChip.vue'
 
 const recipes = ref<any[]>([])
 const items = ref<any[]>([])
 const dialogVisible = ref(false)
+const editingId = ref<number | null>(null)
 const form = ref<any>({ name: '', category: '炼金', expected_success_rate: 0.9, materials: [], outputs: [] })
 const currentMat = ref({ item_id: null, quantity: 1 })
 const currentOut = ref({ item_id: null, quantity: 1 })
+
+const dialogTitle = computed(() => (editingId.value ? '编辑配方' : '新建配方'))
 
 async function fetch() {
   const { data } = await recipeApi.list()
@@ -27,26 +31,64 @@ function itemName(id: number) {
 
 function addMat() {
   if (!currentMat.value.item_id) return
-  form.value.materials.push({ ...currentMat.value })
+  form.value.materials.push({ item_id: currentMat.value.item_id, quantity: currentMat.value.quantity })
   currentMat.value = { item_id: null, quantity: 1 }
 }
 
 function addOut() {
   if (!currentOut.value.item_id) return
-  form.value.outputs.push({ ...currentOut.value })
+  form.value.outputs.push({ item_id: currentOut.value.item_id, quantity: currentOut.value.quantity })
   currentOut.value = { item_id: null, quantity: 1 }
 }
 
-async function create() {
+function resetForm() {
+  editingId.value = null
+  form.value = { name: '', category: '炼金', expected_success_rate: 0.9, materials: [], outputs: [] }
+}
+
+function openCreate() {
+  resetForm()
+  dialogVisible.value = true
+}
+
+function openEdit(row: any) {
+  editingId.value = row.id
+  form.value = {
+    name: row.name,
+    category: row.category || '炼金',
+    expected_success_rate: row.expected_success_rate,
+    materials: (row.materials || []).map((m: any) => ({ item_id: m.item_id, quantity: m.quantity })),
+    outputs: (row.outputs || []).map((o: any) => ({ item_id: o.item_id, quantity: o.quantity })),
+  }
+  dialogVisible.value = true
+}
+
+async function save() {
   if (!form.value.name.trim()) {
     ElMessage.warning('请输入配方名称')
     return
   }
-  await recipeApi.create(form.value)
-  ElMessage.success('配方已创建')
+  if (editingId.value) {
+    await recipeApi.update(editingId.value, form.value)
+    ElMessage.success('配方已更新')
+  } else {
+    await recipeApi.create(form.value)
+    ElMessage.success('配方已创建')
+  }
   dialogVisible.value = false
-  form.value = { name: '', category: '炼金', expected_success_rate: 0.9, materials: [], outputs: [] }
+  resetForm()
   fetch()
+}
+
+async function remove(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定要停用配方「${row.name}」吗？`, '警告', { type: 'warning' })
+    await recipeApi.remove(row.id)
+    ElMessage.success('配方已停用')
+    fetch()
+  } catch {
+    // 取消
+  }
 }
 </script>
 
@@ -55,28 +97,34 @@ async function create() {
     <div class="toolbar">
       <h2 style="margin: 0">炼金 / 配方</h2>
       <div style="flex: 1"></div>
-      <el-button type="primary" @click="dialogVisible = true">新建配方</el-button>
+      <el-button type="primary" @click="openCreate">新建配方</el-button>
     </div>
 
     <el-table :data="recipes" style="margin-top: 16px">
-      <el-table-column prop="name" label="配方" width="180" />
-      <el-table-column prop="category" label="分类" width="100" />
-      <el-table-column label="材料">
+      <el-table-column prop="name" label="配方" width="160" />
+      <el-table-column prop="category" label="分类" width="90" />
+      <el-table-column label="材料" min-width="200">
         <template #default="{ row }">
-          <el-tag v-for="m in row.materials" :key="m.id" size="small" style="margin: 2px">{{ m.item_name }} ×{{ m.quantity }}</el-tag>
+          <ItemChip v-for="m in row.materials" :key="m.id" :name="m.item_name || '#' + m.item_id" :quantity="m.quantity" :icon-url="m.icon_url" />
         </template>
       </el-table-column>
-      <el-table-column label="产出">
+      <el-table-column label="产出" min-width="180">
         <template #default="{ row }">
-          <el-tag v-for="o in row.outputs" :key="o.id" size="small" type="success" style="margin: 2px">{{ o.item_name }} ×{{ o.quantity }}</el-tag>
+          <ItemChip v-for="o in row.outputs" :key="o.id" :name="o.item_name || '#' + o.item_id" :quantity="o.quantity" :icon-url="o.icon_url" type="success" />
         </template>
       </el-table-column>
       <el-table-column label="理论成功率" width="110">
         <template #default="{ row }">{{ (row.expected_success_rate * 100).toFixed(0) }}%</template>
       </el-table-column>
+      <el-table-column label="操作" width="130">
+        <template #default="{ row }">
+          <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button size="small" text type="danger" @click="remove(row)">停用</el-button>
+        </template>
+      </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" title="新建配方" width="600px">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="600px">
       <el-form label-width="90px">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" />
@@ -111,7 +159,7 @@ async function create() {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="create">创建</el-button>
+        <el-button type="primary" @click="save">保存</el-button>
       </template>
     </el-dialog>
   </div>
