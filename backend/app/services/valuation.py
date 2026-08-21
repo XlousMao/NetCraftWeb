@@ -99,6 +99,21 @@ class ValuationService:
             .limit(1)
         ).scalar_one_or_none()
 
+    def _latest_observation(
+        self, item_id: int, obs_type: str
+    ) -> Optional[MarketObservation]:
+        """截至现在最近的一条观察（历史无价格时的兜底，仍绝不用未来价）。"""
+        return self.db.execute(
+            select(MarketObservation)
+            .where(
+                MarketObservation.item_id == item_id,
+                MarketObservation.observation_type == obs_type,
+                MarketObservation.observed_at <= datetime.now(timezone.utc),
+            )
+            .order_by(MarketObservation.observed_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
     def _unit_price_to_base(self, obs: MarketObservation) -> Decimal:
         """观察的单价以 price_item 计价，换算为基础货币（钻石）。"""
         unit = obs.unit_price
@@ -120,6 +135,9 @@ class ValuationService:
         policies = [resolved] if resolved in OBSERVATION_TYPES else list(AUTO_ORDER)
         for p in policies:
             obs = self._observation_at(item_id, p, observed_at)
+            if obs is None:
+                # 该时点尚无历史价格（如先录副本、后补价格）→ 兜底用最近一次观察
+                obs = self._latest_observation(item_id, p)
             if obs is not None:
                 return self._unit_price_to_base(obs), f"{p}:observation"
         return Decimal(0), "none"
@@ -209,6 +227,12 @@ class ValuationService:
         self.db.add(obs)
         self.db.flush()
         return obs
+
+    def observation_fiat(self, obs: MarketObservation) -> Optional[Decimal]:
+        """某条市场观察的总 RMB 估值（按 observed_at 时点汇率）。"""
+        unit_diamond = self._unit_price_to_base(obs)
+        total_diamond = q_money(unit_diamond * Decimal(obs.quantity or 1))
+        return self.fiat.value(total_diamond, obs.observed_at)
 
     def market_summary(self, item_id: int) -> dict:
         """某物品市场概览：价格区间、最高收购、最低出售、最近观察。"""

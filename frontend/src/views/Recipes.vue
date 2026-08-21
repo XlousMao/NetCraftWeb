@@ -35,6 +35,19 @@ function itemName(id: number) {
   return items.value.find((i) => i.id === id)?.name || `#${id}`
 }
 
+function itemIcon(id: number) {
+  return items.value.find((i) => i.id === id)?.icon_url || null
+}
+
+// 合成/制造是确定性操作，成功率自动 100%；只有炼金有失败概率
+function onTypeChange() {
+  if (form.value.recipe_type !== 'ALCHEMY') {
+    form.value.expected_success_rate = 1.0
+  } else if (form.value.expected_success_rate === 1.0) {
+    form.value.expected_success_rate = 0.9
+  }
+}
+
 function addMat() {
   if (!currentMat.value.item_id) return
   form.value.materials.push({ item_id: currentMat.value.item_id, quantity: currentMat.value.quantity })
@@ -139,33 +152,69 @@ async function remove(row: any) {
           <el-input v-model="form.name" />
         </el-form-item>
         <el-form-item label="类型">
-          <el-select v-model="form.recipe_type" style="width: 100%">
+          <el-select v-model="form.recipe_type" style="width: 100%" @change="onTypeChange">
             <el-option label="炼金 ALCHEMY" value="ALCHEMY" />
             <el-option label="制造 CRAFT" value="CRAFT" />
             <el-option label="合成 SYNTHESIS" value="SYNTHESIS" />
           </el-select>
         </el-form-item>
-        <el-form-item label="理论成功率">
+        <el-form-item v-if="form.recipe_type === 'ALCHEMY'" label="理论成功率">
           <el-slider v-model="form.expected_success_rate" :min="0" :max="1" :step="0.01" :format-tooltip="(v: number) => (v * 100).toFixed(0) + '%'" />
+        </el-form-item>
+        <el-form-item v-else label="成功率">
+          <el-tag type="success">100%（{{ typeLabel[form.recipe_type] }}为确定性操作）</el-tag>
         </el-form-item>
         <el-divider content-position="left">材料</el-divider>
         <div class="add-row">
           <el-select v-model="currentMat.item_id" filterable placeholder="搜索材料" style="flex: 1">
-            <el-option v-for="i in items" :key="i.id" :label="i.name" :value="i.id" />
+            <el-option v-for="i in items" :key="i.id" :label="i.name" :value="i.id">
+              <div class="option-item">
+                <img v-if="i.icon_url" :src="i.icon_url" class="option-img" />
+                <span v-else class="option-ph">{{ i.name.slice(0, 1) }}</span>
+                <span class="option-name">{{ i.name }}</span>
+              </div>
+            </el-option>
           </el-select>
           <el-input-number v-model="currentMat.quantity" :min="1" />
           <el-button type="primary" @click="addMat">添加</el-button>
         </div>
-        <el-tag v-for="(m, idx) in form.materials" :key="idx" closable @close="form.materials.splice(idx, 1)" style="margin: 4px">{{ itemName(m.item_id) }} ×{{ m.quantity }}</el-tag>
+        <div class="chips">
+          <ItemChip
+            v-for="(m, idx) in form.materials"
+            :key="idx"
+            :name="itemName(m.item_id)"
+            :quantity="m.quantity"
+            :icon-url="itemIcon(m.item_id)"
+            closable
+            @close="form.materials.splice(idx, 1)"
+          />
+        </div>
         <el-divider content-position="left">产出</el-divider>
         <div class="add-row">
           <el-select v-model="currentOut.item_id" filterable placeholder="搜索产出物" style="flex: 1">
-            <el-option v-for="i in items" :key="i.id" :label="i.name" :value="i.id" />
+            <el-option v-for="i in items" :key="i.id" :label="i.name" :value="i.id">
+              <div class="option-item">
+                <img v-if="i.icon_url" :src="i.icon_url" class="option-img" />
+                <span v-else class="option-ph">{{ i.name.slice(0, 1) }}</span>
+                <span class="option-name">{{ i.name }}</span>
+              </div>
+            </el-option>
           </el-select>
           <el-input-number v-model="currentOut.quantity" :min="1" />
           <el-button type="primary" @click="addOut">添加</el-button>
         </div>
-        <el-tag v-for="(o, idx) in form.outputs" :key="idx" closable type="success" @close="form.outputs.splice(idx, 1)" style="margin: 4px">{{ itemName(o.item_id) }} ×{{ o.quantity }}</el-tag>
+        <div class="chips">
+          <ItemChip
+            v-for="(o, idx) in form.outputs"
+            :key="idx"
+            :name="itemName(o.item_id)"
+            :quantity="o.quantity"
+            :icon-url="itemIcon(o.item_id)"
+            type="success"
+            closable
+            @close="form.outputs.splice(idx, 1)"
+          />
+        </div>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -184,5 +233,39 @@ async function remove(row: any) {
   display: flex;
   gap: 8px;
   margin-bottom: 8px;
+  align-items: center;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-height: 30px;
+}
+.option-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.option-img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #f5f6f7;
+}
+.option-ph {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: #f5f6f7;
+  color: #c0c4cc;
+  font-size: 12px;
+  font-weight: 600;
+}
+.option-name {
+  font-size: 13px;
 }
 </style>

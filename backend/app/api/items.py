@@ -113,14 +113,14 @@ def get_item(item_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "物品不存在")
     base = _item_out(db, item).model_dump()
     base["images"] = [ItemImageOut.model_validate(img).model_dump() for img in item.images]
+    vs = ValuationService(db)
     base["market_observations"] = [
-        MarketObservationOut.model_validate(o).model_dump()
+        _market_observation_out(o, vs)
         for o in sorted(item.market_observations, key=lambda x: x.observed_at, reverse=True)
     ]
     base["relations"] = [
         ItemRelationOut.model_validate(r).model_dump() for r in item.relations_out
     ]
-    vs = ValuationService(db)
     try:
         base["current_value"] = vs.value(item.id, 1, "auto").as_dict()
     except Exception:
@@ -128,6 +128,17 @@ def get_item(item_id: int, db: Session = Depends(get_db)):
     base["market_summary"] = vs.market_summary(item.id)
     base["price_history"] = vs.price_history(item.id)
     return base
+
+
+def _market_observation_out(o: MarketObservation, vs: ValuationService) -> dict:
+    """序列化市场观察并附加当时的 RMB 估值。"""
+    d = MarketObservationOut.model_validate(o).model_dump()
+    try:
+        fv = vs.observation_fiat(o)
+        d["fiat_value"] = float(fv) if fv is not None else None
+    except Exception:
+        d["fiat_value"] = None
+    return d
 
 
 @router.patch("/{item_id}", response_model=ItemOut)

@@ -98,6 +98,13 @@ const totalRmb = computed(() => {
   return totalDiamond.value * rate
 })
 
+// 自制最低单件成本（各配方中 per_unit_cost 最小值）
+const minCraftCost = computed(() => {
+  const opts = craftDecision.value?.craft_options || []
+  if (!opts.length) return null
+  return Math.min(...opts.map((o: any) => o.per_unit_cost))
+})
+
 const stars = computed(() => {
   const score = item.value?.importance_score ?? 0
   return '★'.repeat(Math.min(5, Math.max(1, Math.round(score / 20 * 5))))
@@ -249,6 +256,13 @@ function summary() {
             <span>最高收购 <b class="buy">{{ summary().highest_buy_order ?? '—' }}</b></span>
             <span>最低出售 <b class="sell">{{ summary().lowest_sell_offer ?? '—' }}</b></span>
           </div>
+          <div v-if="craftDecision && !craftDecision.error && craftDecision.craft_options?.length" class="craft-compare">
+            <span class="cc-label">自制 vs 购买</span>
+            <span>直接购买 <b>{{ craftDecision.buy_price }} 钻石</b></span>
+            <span>自制最低 <b>{{ minCraftCost != null ? minCraftCost.toLocaleString() : '—' }} 钻石</b></span>
+            <el-tag :type="craftDecision.recommendation === 'craft' ? 'success' : 'warning'" size="small">{{ craftDecision.recommendation_text }}</el-tag>
+            <el-button size="small" text type="primary" @click="activeTab = 'decision'">查看详情</el-button>
+          </div>
         </div>
       </div>
     </el-card>
@@ -316,6 +330,9 @@ function summary() {
             </el-table-column>
             <el-table-column label="总价(钻石)" width="110">
               <template #default="{ row }">{{ row.price_quantity }}</template>
+            </el-table-column>
+            <el-table-column label="RMB(当时)" width="110">
+              <template #default="{ row }">{{ row.fiat_value != null ? '≈ ' + row.fiat_value.toFixed(3) : '—' }}</template>
             </el-table-column>
             <el-table-column label="单价(钻石/个)" width="120">
               <template #default="{ row }">{{ (row.price_quantity / row.quantity).toFixed(4) }}</template>
@@ -453,6 +470,23 @@ function summary() {
 }
 .market-summary .sell {
   color: #f56c6c;
+}
+.craft-compare {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: #f5f7fa;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.craft-compare .cc-label {
+  font-weight: 600;
+  color: #303133;
+}
+.craft-compare b {
+  color: #3b82f6;
 }
 .market-form {
   display: flex;

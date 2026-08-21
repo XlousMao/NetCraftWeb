@@ -194,17 +194,16 @@ async function remove(row: any) {
 
     <el-table :data="runs" v-loading="loading" style="margin-top: 16px">
       <el-table-column prop="dungeon_name" label="副本" width="120" />
-      <el-table-column label="掉落物" min-width="200">
+      <el-table-column label="掉落物" min-width="220">
         <template #default="{ row }">
           <div class="loot-imgs">
-            <el-tooltip v-for="l in (row.loots || []).slice(0, 5)" :key="l.id" :content="`${l.item_name} ×${l.quantity}`" placement="top">
+            <el-tooltip v-for="l in (row.loots || [])" :key="l.id" :content="`${l.item_name} ×${l.quantity}`" placement="top">
               <div class="loot-img-wrap">
                 <img v-if="l.icon_url" :src="l.icon_url" class="loot-img" />
                 <span v-else class="loot-ph">{{ (l.item_name || '?').slice(0, 1) }}</span>
                 <span class="loot-qty">×{{ l.quantity }}</span>
               </div>
             </el-tooltip>
-            <el-tag v-if="(row.loots || []).length > 5" size="small" type="info">+{{ row.loots.length - 5 }}</el-tag>
             <span v-if="!row.loots || row.loots.length === 0" class="text-muted">无</span>
           </div>
         </template>

@@ -107,6 +107,7 @@ class MarketObservationOut(BaseModel):
     observed_at: datetime
     note: Optional[str] = None
     created_at: datetime
+    fiat_value: Optional[float] = None
 
 
 class ItemRelationOut(BaseModel):
