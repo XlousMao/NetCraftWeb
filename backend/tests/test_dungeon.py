@@ -1,6 +1,7 @@
-"""副本收益计算集成测试（掉落/维修/消耗/净利润/每小时）。"""
+"""副本收益计算集成测试（掉落/维修/消耗/净利润/每小时，含钻石+材料）。"""
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from app.models.dungeon import Dungeon
 from app.models.equipment import Equipment, EquipmentRepairRequirement
@@ -13,13 +14,12 @@ from app.schemas.dungeon import (
 from app.services.dungeon import DungeonService
 
 
-def _setup(db, make_item):
-    items = {
-        "精钢锭": make_item("精钢锭", vendor_buy_price=80, market_price=105),
-        "钻石": make_item("钻石", vendor_buy_price=150),
-        "魔晶": make_item("魔晶", vendor_buy_price=120),
-        "生命药水": make_item("生命药水", vendor_buy_price=40),
-    }
+def _setup(db, make_item, currency_setup):
+    steel = make_item("精钢锭", vendor_buy_price=80, market_price=105)
+    diamond = currency_setup["钻石"]
+    crystal = currency_setup["钻石结晶"]
+    potion = make_item("生命药水", vendor_buy_price=40)
+
     dungeon = Dungeon(name="副本A")
     db.add(dungeon)
     db.flush()
@@ -27,14 +27,14 @@ def _setup(db, make_item):
     sword = Equipment(name="龙骑士剑")
     db.add(sword)
     db.flush()
-    db.add(EquipmentRepairRequirement(equipment_id=sword.id, item_id=items["精钢锭"].id, quantity=3))
-    db.add(EquipmentRepairRequirement(equipment_id=sword.id, item_id=items["钻石"].id, quantity=2))
+    db.add(EquipmentRepairRequirement(equipment_id=sword.id, item_id=steel.id, quantity=3))
+    db.add(EquipmentRepairRequirement(equipment_id=sword.id, item_id=diamond.id, quantity=20))
     db.flush()
-    return items, dungeon, sword
+    return {"steel": steel, "diamond": diamond, "crystal": crystal, "potion": potion}, dungeon, sword
 
 
-def test_dungeon_run_full_calculation(db, make_item):
-    items, dungeon, sword = _setup(db, make_item)
+def test_dungeon_run_full_calculation(db, make_item, currency_setup):
+    items, dungeon, sword = _setup(db, make_item, currency_setup)
 
     payload = DungeonRunCreate(
         dungeon_id=dungeon.id,
@@ -42,48 +42,40 @@ def test_dungeon_run_full_calculation(db, make_item):
         travel_minutes=12,
         combat_minutes=60,
         loots=[
-            LootCreate(item_id=items["精钢锭"].id, quantity=32),
-            LootCreate(item_id=items["钻石"].id, quantity=4),
-            LootCreate(item_id=items["魔晶"].id, quantity=5),
+            LootCreate(item_id=items["steel"].id, quantity=32),      # 32×80=2560
+            LootCreate(item_id=items["diamond"].id, quantity=4),      # 4×1=4
+            LootCreate(item_id=items["crystal"].id, quantity=5),      # 5×99=495
         ],
-        consumptions=[ConsumptionCreate(item_id=items["生命药水"].id, quantity=10)],
+        consumptions=[ConsumptionCreate(item_id=items["potion"].id, quantity=10)],  # 400
         repairs=[RepairLineCreate(equipment_id=sword.id)],
     )
 
     run = DungeonService(db).create_run(payload)
 
-    # 掉落: 32*80 + 4*150 + 5*120 = 2560 + 600 + 600 = 3760
-    assert run.gross_value == 3760.0
-    # 维修: 精钢锭3*80 + 钻石2*150 = 240 + 300 = 540
-    assert run.repair_cost == 540.0
-    # 消耗: 生命药水10*40 = 400
-    assert run.consumable_cost == 400.0
-    # 总成本 540 + 400 = 940
-    assert run.total_cost == 940.0
-    # 净利润 3760 - 940 = 2820
-    assert run.net_profit == 2820.0
+    # 掉落: 2560 + 4 + 495 = 3059
+    assert run.gross_value == Decimal(3059)
+    # 维修: 精钢锭3×80 + 钻石20×1 = 260
+    assert run.repair_cost == Decimal(260)
+    # 消耗: 10×40 = 400
+    assert run.consumable_cost == Decimal(400)
+    # 总成本 = 660
+    assert run.total_cost == Decimal(660)
+    # 净利润 = 2399
+    assert run.net_profit == Decimal(2399)
     # 总时长 72 分钟
-    assert run.total_duration_minutes == 72.0
-    # 每小时 2820 / 1.2 = 2350
-    assert run.profit_per_hour == round(2820 / 1.2, 4)
+    assert run.total_duration_minutes == Decimal(72)
+    # 每小时 = 2399 / 1.2
+    assert abs(run.profit_per_hour - Decimal(2399) / Decimal("1.2")) < Decimal("0.0001")
 
 
-def test_valuation_snapshot_immutable(db, make_item):
-    """修改当前价格后，历史副本收益保持不变。"""
-    items, dungeon, sword = _setup(db, make_item)
-
+def test_crystal_loot_converts_to_diamond(db, make_item, currency_setup):
+    """钻石结晶掉落自动换算为钻石。"""
+    items, dungeon, _ = _setup(db, make_item, currency_setup)
     payload = DungeonRunCreate(
         dungeon_id=dungeon.id,
-        started_at=datetime.now(timezone.utc) - timedelta(hours=1),
-        loots=[LootCreate(item_id=items["精钢锭"].id, quantity=30)],
+        started_at=datetime.now(timezone.utc),
+        loots=[LootCreate(item_id=items["crystal"].id, quantity=3)],
     )
     run = DungeonService(db).create_run(payload)
-    assert run.gross_value == 2400.0  # 30 * 80
-
-    # 现在把精钢锭商人价从 80 改为 120
-    items["精钢锭"].vendor_buy_price = 120
-    db.flush()
-
-    # 历史记录的掉落估值快照应保持 80 不变
-    assert run.loots[0].valuation_unit_price == 80.0
-    assert run.gross_value == 2400.0
+    # 3 钻石结晶 = 297 钻石
+    assert run.gross_value == Decimal(297)

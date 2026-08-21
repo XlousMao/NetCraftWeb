@@ -2,9 +2,10 @@
 副本 / 炼金记录完成后会自动同步一条活动记录（引用来源）。"""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -44,12 +45,13 @@ class ActivityRecord(Base, TimestampMixin):
 
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
-    duration_minutes: Mapped[float] = mapped_column(Float, default=0.0)
+    duration_minutes: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
 
-    gross_value: Mapped[float] = mapped_column(Float, default=0.0)
-    total_cost: Mapped[float] = mapped_column(Float, default=0.0)
-    net_profit: Mapped[float] = mapped_column(Float, default=0.0)
-    profit_per_hour: Mapped[float] = mapped_column(Float, default=0.0)
+    gross_value: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
+    total_cost: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
+    net_profit: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
+    profit_per_hour: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
+    fiat_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
 
     notes: Mapped[Optional[str]] = mapped_column(Text)
 

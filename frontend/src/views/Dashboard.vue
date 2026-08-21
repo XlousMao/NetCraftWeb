@@ -70,13 +70,27 @@ const dungeonChart = computed(() => {
         <el-tag v-if="week?.is_loss" type="danger" style="margin-left: 8px">本周副本处于亏损状态</el-tag>
       </template>
       <div class="week-grid">
-        <StatCard label="掉落价值" :value="week?.total_gross.toLocaleString() ?? '—'" />
-        <StatCard label="维修" :value="week?.total_repair.toLocaleString() ?? '—'" />
-        <StatCard label="消耗" :value="week?.total_consumable.toLocaleString() ?? '—'" />
-        <StatCard label="其他" :value="week?.total_other.toLocaleString() ?? '—'" />
-        <StatCard label="本周净利润" :value="(week?.net_profit ?? 0).toLocaleString()" :value-class="(week?.net_profit ?? 0) >= 0 ? 'profit' : 'loss'" />
-        <StatCard label="平均收益/小时" :value="week?.profit_per_hour.toLocaleString() ?? '—'" sub="净利润 / 有效时间" />
+        <StatCard label="掉落价值(钻石)" :value="week?.total_gross.toLocaleString() ?? '—'" />
+        <StatCard label="维修(钻石)" :value="week?.total_repair.toLocaleString() ?? '—'" />
+        <StatCard label="消耗(钻石)" :value="week?.total_consumable.toLocaleString() ?? '—'" />
+        <StatCard label="其他(钻石)" :value="week?.total_other.toLocaleString() ?? '—'" />
+        <StatCard label="本周净利润" :value="(week?.net_profit ?? 0).toLocaleString() + ' 钻石'" :value-class="(week?.net_profit ?? 0) >= 0 ? 'profit' : 'loss'" :sub="week?.net_profit_fiat != null ? '约 ' + week?.net_profit_fiat.toFixed(2) + ' RMB' : '暂无 RMB 汇率'" />
+        <StatCard label="平均收益/小时" :value="week?.profit_per_hour.toLocaleString() + ' 钻石'" :sub="week?.profit_per_hour_fiat != null ? '约 ' + week?.profit_per_hour_fiat.toFixed(2) + ' RMB/时' : undefined" />
       </div>
+      <el-alert
+        v-if="(week?.net_profit ?? 0) < 0"
+        type="error"
+        :closable="false"
+        title="本周副本：亏损"
+        style="margin-top: 12px"
+      />
+      <el-alert
+        v-else-if="week && week.run_count > 0"
+        type="success"
+        :closable="false"
+        title="本周副本：盈利"
+        style="margin-top: 12px"
+      />
     </el-card>
 
     <!-- 今日 + 排行 -->

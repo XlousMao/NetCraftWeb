@@ -48,8 +48,10 @@ def value(payload: ValuationRequest, db: Session = Depends(get_db)):
     from datetime import datetime
 
     observed_at = datetime.fromisoformat(payload.observed_at) if payload.observed_at else None
-    result = ValuationService(db).value(payload.item_id, payload.quantity, payload.policy, observed_at)
-    return ValuationResult(**result)
+    result = ValuationService(db).value(
+        payload.item_id, payload.quantity, payload.policy, observed_at
+    )
+    return result.as_dict()
 
 
 @router.post("/recompute-importance", response_model=dict)

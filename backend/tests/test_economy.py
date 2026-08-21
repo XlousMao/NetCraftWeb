@@ -1,4 +1,6 @@
-"""核心经济公式单元测试。"""
+"""核心经济公式单元测试（Decimal）。"""
+
+from decimal import Decimal
 
 from app.analysis.economy_calculator import (
     calculate_actual_unit_cost,
@@ -14,41 +16,43 @@ from app.analysis.economy_calculator import (
 
 
 def test_loot_value():
-    assert calculate_loot_value([(80, 30), (150, 4)]) == 3000.0  # 2400 + 600
+    assert calculate_loot_value([(Decimal(80), Decimal(30)), (Decimal(150), Decimal(4))]) == Decimal(3000)
 
 
 def test_net_profit():
-    gross = 9260
-    cost = calculate_total_cost(repair_cost=1200, consumable_cost=300)
-    assert cost == 1500
-    assert calculate_net_profit(gross, cost) == 7760
+    gross = Decimal(9260)
+    cost = calculate_total_cost(repair_cost=Decimal(1200), consumable_cost=Decimal(300))
+    assert cost == Decimal(1500)
+    assert calculate_net_profit(gross, cost) == Decimal(7760)
 
 
 def test_profit_per_hour():
-    # 7760 金币 / 72 分钟(1.2h)
-    assert calculate_profit_per_hour(7760, 72) == round(7760 / 1.2, 4)
+    # 7760 / 72 分钟(1.2h)
+    r = calculate_profit_per_hour(Decimal(7760), Decimal(72))
+    assert abs(r - Decimal(7760) / Decimal("1.2")) < Decimal("0.0001")
 
 
 def test_repair_cost():
-    # 精钢锭×3(80) + 钻石×2(150) + 金币 100
-    cost = calculate_repair_cost([(80, 3), (150, 2)], currency_cost=100)
-    assert cost == 640  # 240 + 300 + 100
+    # 精钢锭×3(80) + 钻石×2(150) = 240 + 300 = 540
+    cost = calculate_repair_cost([(Decimal(80), Decimal(3)), (Decimal(150), Decimal(2))])
+    assert cost == Decimal(540)
 
 
 def test_success_rate():
-    assert calculate_success_rate(87, 100) == 0.87
-    assert calculate_success_rate(0, 0) == 0.0
+    assert calculate_success_rate(87, 100) == Decimal("0.87")
+    assert calculate_success_rate(0, 0) == Decimal(0)
 
 
 def test_actual_unit_cost():
-    # 7500 总成本 / 87 成功 = 86.2069...
-    assert round(calculate_actual_unit_cost(7500, 87), 2) == 86.21
+    r = calculate_actual_unit_cost(Decimal(7500), 87)
+    assert abs(r - Decimal(7500) / Decimal(87)) < Decimal("0.0001")
 
 
 def test_roi():
-    # 毛利 39.5%，即 34/86.21 约 0.3944
-    assert round(calculate_roi(34, 86.21), 3) == 0.394
+    # 毛利 34 / 成本 86.21
+    r = calculate_roi(Decimal(34), Decimal("86.21"))
+    assert abs(r - Decimal(34) / Decimal("86.21")) < Decimal("0.0001")
 
 
 def test_gross_profit():
-    assert calculate_gross_profit(10440, 7500) == 2940
+    assert calculate_gross_profit(Decimal(10440), Decimal(7500)) == Decimal(2940)

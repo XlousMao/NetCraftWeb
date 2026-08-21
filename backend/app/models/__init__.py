@@ -1,6 +1,12 @@
 """模型包：统一导出所有 ORM 模型，确保 Base.metadata 完整。"""
 
 from app.models.activity import Activity, ActivityRecord
+from app.models.currency import (
+    CurrencyConversionRule,
+    CurrencyDenomination,
+    CurrencySystem,
+    FiatExchangeObservation,
+)
 from app.models.dungeon import (
     Dungeon,
     DungeonConsumption,
@@ -9,7 +15,13 @@ from app.models.dungeon import (
     DungeonRun,
 )
 from app.models.equipment import Equipment, EquipmentRepairRequirement
-from app.models.item import Item, ItemImage, ItemPriceHistory, ItemRelation
+from app.models.item import (
+    Item,
+    ItemImage,
+    ItemPriceHistory,
+    ItemRelation,
+    ItemRole,
+)
 from app.models.recipe import (
     ProductionRecord,
     Recipe,
@@ -22,6 +34,11 @@ __all__ = [
     "ItemImage",
     "ItemPriceHistory",
     "ItemRelation",
+    "ItemRole",
+    "CurrencySystem",
+    "CurrencyDenomination",
+    "CurrencyConversionRule",
+    "FiatExchangeObservation",
     "Dungeon",
     "DungeonRun",
     "DungeonLoot",

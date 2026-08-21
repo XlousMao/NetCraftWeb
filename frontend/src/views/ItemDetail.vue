@@ -81,6 +81,7 @@ function priceTypeLabel(type: string): string {
           <h2>{{ item.name }}</h2>
           <div class="tags">
             <el-tag size="small">{{ item.category || '未分类' }}</el-tag>
+            <el-tag v-for="r in item.roles || []" :key="r" size="small" type="info" effect="plain">{{ r }}</el-tag>
             <span class="stars" style="color: #f59e0b">{{ stars }}</span>
             <span class="text-muted">重要性 {{ item.importance_score }}</span>
           </div>
@@ -88,6 +89,10 @@ function priceTypeLabel(type: string): string {
             <span>商人价 <b>{{ item.vendor_buy_price ?? '—' }}</b></span>
             <span>市场价 <b>{{ item.market_price ?? '—' }}</b></span>
             <span>手动估值 <b>{{ item.manual_price ?? '—' }}</b></span>
+          </div>
+          <div v-if="item.current_value" class="current-value">
+            当前估值：<b>{{ item.current_value.base_currency_value }} 钻石</b>
+            <span v-if="item.current_value.fiat_value != null" class="text-muted">≈ {{ item.current_value.fiat_value.toFixed(3) }} RMB</span>
           </div>
         </div>
       </div>

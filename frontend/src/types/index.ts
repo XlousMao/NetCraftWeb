@@ -10,6 +10,7 @@ export interface Item {
   level?: number
   stack_size?: number
   tags: string[]
+  roles: string[]
   vendor_buy_price?: number
   market_price?: number
   manual_price?: number
@@ -45,6 +46,9 @@ export interface DungeonRun {
   total_cost: number
   net_profit: number
   profit_per_hour: number
+  gross_value_fiat?: number
+  net_profit_fiat?: number
+  profit_per_hour_fiat?: number
   loots: any[]
   consumptions: any[]
 }
@@ -76,6 +80,9 @@ export interface PeriodAnalysis {
   net_profit: number
   total_duration_minutes: number
   profit_per_hour: number
+  gross_value_fiat: number
+  net_profit_fiat: number
+  profit_per_hour_fiat: number
   cost_ratio: number
   cost_breakdown: { name: string; value: number }[]
   is_loss: boolean
@@ -84,6 +91,7 @@ export interface PeriodAnalysis {
 export interface DashboardData {
   today: PeriodAnalysis
   week: PeriodAnalysis
+  month: PeriodAnalysis
   top_dungeons: any[]
   top_recipes: any[]
   activities: any

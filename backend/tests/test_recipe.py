@@ -1,6 +1,7 @@
-"""炼金/生产成本与 ROI 集成测试。"""
+"""炼金/生产成本与 ROI 集成测试（Decimal）。"""
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from app.models.recipe import Recipe, RecipeMaterial, RecipeOutput
 from app.schemas.recipe import ProductionRecordCreate
@@ -13,7 +14,7 @@ def _setup_recipe(db, make_item):
     bottle = make_item("空瓶", vendor_buy_price=5)
     potion = make_item("高级生命药水", vendor_buy_price=120)
 
-    recipe = Recipe(name="高级生命药水", expected_success_rate=0.9)
+    recipe = Recipe(name="高级生命药水", expected_success_rate=Decimal("0.9"))
     db.add(recipe)
     db.flush()
     db.add(RecipeMaterial(recipe_id=recipe.id, item_id=red.id, quantity=3))
@@ -27,7 +28,7 @@ def _setup_recipe(db, make_item):
 def test_production_record_cost_and_roi(db, make_item):
     recipe, potion = _setup_recipe(db, make_item)
 
-    # 理论单次成本 = 3*25 + 2*120 + 1*5 = 75 + 240 + 5 = 320
+    # 理论单次成本 = 3*25 + 2*120 + 1*5 = 320
     payload = ProductionRecordCreate(
         recipe_id=recipe.id,
         started_at=datetime.now(timezone.utc) - timedelta(hours=1),
@@ -37,14 +38,14 @@ def test_production_record_cost_and_roi(db, make_item):
     record = RecipeService(db).create_production_record(payload)
 
     # 材料总成本 = 320 * 100 = 32000
-    assert record.material_cost == 32000.0
+    assert record.material_cost == Decimal(32000)
     # 成功率 87%
-    assert record.actual_success_rate == 0.87
+    assert record.actual_success_rate == Decimal("0.87")
     # 实际单位成本 = 32000 / 87
-    assert round(record.actual_unit_cost, 2) == round(32000 / 87, 2)
+    assert abs(record.actual_unit_cost - Decimal(32000) / Decimal(87)) < Decimal("0.0001")
     # 收入 = 成功 87 * 产出1 * 单价120 = 10440
-    assert record.revenue == 10440.0
-    # 毛利 = 10440 - 32000 = -21560 (亏损)
-    assert record.gross_profit == -21560.0
+    assert record.revenue == Decimal(10440)
+    # 毛利 = 10440 - 32000 = -21560
+    assert record.gross_profit == Decimal(-21560)
     # ROI = -21560 / 32000
-    assert record.roi == round(-21560 / 32000, 4)
+    assert abs(record.roi - Decimal(-21560) / Decimal(32000)) < Decimal("0.0001")

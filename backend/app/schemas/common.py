@@ -40,8 +40,11 @@ class ValuationRequest(BaseModel):
 
 class ValuationResult(BaseModel):
     item_id: int
+    quantity: float
     unit_price: float
     total: float
+    currency_item_id: Optional[int] = None
+    base_currency_value: float
+    fiat_value: Optional[float] = None
     source: str
-    currency: str = "gold"
     observed_at: str

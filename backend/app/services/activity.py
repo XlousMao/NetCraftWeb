@@ -59,6 +59,7 @@ class ActivityService:
         record.total_cost = run.total_cost
         record.net_profit = run.net_profit
         record.profit_per_hour = run.profit_per_hour
+        record.fiat_value = run.net_profit_fiat
         record.notes = run.notes
         if existing is None:
             self.db.add(record)
@@ -81,6 +82,7 @@ class ActivityService:
         record.total_cost = pr.material_cost
         record.net_profit = pr.gross_profit
         record.profit_per_hour = 0.0
+        record.fiat_value = pr.fiat_value
         record.notes = pr.notes
         if existing is None:
             self.db.add(record)

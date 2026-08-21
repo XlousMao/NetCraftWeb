@@ -82,3 +82,12 @@ export const dashboardApi = {
 export const aiApi = {
   analyze: (question?: string) => client.post('/ai/analyze', { question }),
 }
+
+// ---- Currency / Fiat ----
+export const currencyApi = {
+  systems: () => client.get('/currency/systems'),
+  summary: () => client.get('/currency/summary'),
+  convert: (data: any) => client.post('/currency/convert', data),
+  listFiat: () => client.get('/currency/fiat'),
+  recordFiat: (data: any) => client.post('/currency/fiat', data),
+}

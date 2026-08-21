@@ -113,16 +113,17 @@ function resetForm() {
       <el-table-column label="时间" width="180">
         <template #default="{ row }">{{ new Date(row.started_at).toLocaleString() }}</template>
       </el-table-column>
-      <el-table-column prop="gross_value" label="掉落价值" width="110" />
+      <el-table-column prop="gross_value" label="掉落价值(钻石)" width="120" />
       <el-table-column prop="repair_cost" label="维修" width="90" />
       <el-table-column prop="consumable_cost" label="消耗" width="90" />
       <el-table-column prop="total_cost" label="总成本" width="100" />
-      <el-table-column label="净利润" width="110">
+      <el-table-column label="净利润" width="130">
         <template #default="{ row }">
           <span :class="row.net_profit >= 0 ? 'profit' : 'loss'">{{ row.net_profit.toLocaleString() }}</span>
+          <div v-if="row.net_profit_fiat != null" class="text-muted">≈ {{ row.net_profit_fiat.toFixed(2) }} RMB</div>
         </template>
       </el-table-column>
-      <el-table-column prop="profit_per_hour" label="金币/小时" width="110" />
+      <el-table-column prop="profit_per_hour" label="钻石/小时" width="110" />
       <el-table-column label="操作" width="100">
         <template #default="{ row }">
           <el-button size="small" text type="danger" @click="dungeonRunApi.remove(row.id).then(fetch)">删除</el-button>

@@ -53,7 +53,6 @@ def create_equipment(payload: EquipmentCreate, db: Session = Depends(get_db)):
                 equipment_id=eq.id,
                 item_id=req.item_id,
                 quantity=req.quantity,
-                currency_cost=req.currency_cost,
             )
         )
     db.flush()

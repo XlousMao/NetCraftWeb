@@ -1,22 +1,35 @@
 """分析引擎：重要性评分、周期经济分析、排行、活动效率、Dashboard 聚合。
 
 所有计算读取业务事实数据，产出可解释的结构化结果（供 Dashboard 与 AI 消费）。
+核心经济计算使用 Decimal（见 economy_calculator），输出为 float 供 JSON 序列化。
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.analysis.economy_calculator import calculate_profit_per_hour
+from app.models.activity import ActivityRecord
 from app.models.dungeon import Dungeon, DungeonLoot, DungeonRun
 from app.models.equipment import EquipmentRepairRequirement
-from app.models.item import Item, ItemRelation
-from app.models.recipe import ProductionRecord, Recipe, RecipeMaterial, RecipeOutput
-from app.models.activity import ActivityRecord
+from app.models.item import Item, ItemRelation, ItemRole
+from app.models.recipe import ProductionRecord, RecipeMaterial, RecipeOutput
+
+
+def _f(x) -> float:
+    """Decimal/数值 → float，用于 JSON 输出。"""
+    if x is None:
+        return 0.0
+    return float(x)
+
+
+def _f_or_none(x) -> Optional[float]:
+    return None if x is None else float(x)
 
 
 # ---- Item Importance ----
@@ -29,6 +42,7 @@ def compute_item_importance(db: Session, item_id: int) -> tuple[float, dict]:
       - 被装备消耗：每件装备 +2
       - 被配方消耗：每个配方 +2
       - 被配方产出：每个配方 +1
+      - 是否属于货币：+5
       - 交易价值：min(价格/100, 5)
       - 总流通量：min(总量/100, 5)
     """
@@ -70,29 +84,40 @@ def compute_item_importance(db: Session, item_id: int) -> tuple[float, dict]:
     )
     total_flow = (
         db.execute(
-            select(func.coalesce(func.sum(DungeonLoot.quantity), 0.0)).where(
+            select(func.coalesce(func.sum(DungeonLoot.quantity), 0)).where(
                 DungeonLoot.item_id == item_id
             )
         )
         .scalar_one()
-    ) or 0.0
+    ) or 0
+    is_currency = (
+        db.execute(
+            select(ItemRole).where(
+                ItemRole.item_id == item_id, ItemRole.role == "CURRENCY"
+            )
+        ).scalar_one_or_none()
+        is not None
+    )
 
     price = (
         item.manual_price
-        if item.manual_price
+        if item.manual_price is not None
         else item.market_price
-        if item.market_price
-        else item.vendor_buy_price or 0.0
+        if item.market_price is not None
+        else item.vendor_buy_price or 0
     )
+    price = float(price)
+    flow = float(total_flow)
 
     price_component = min(price / 100.0, 5.0)
-    flow_component = min(total_flow / 100.0, 5.0)
+    flow_component = min(flow / 100.0, 5.0)
 
     score = round(
         2 * drop_dungeons
         + 2 * repair_consumers
         + 2 * recipe_consumers
         + 1 * recipe_producers
+        + (5 if is_currency else 0)
         + price_component
         + flow_component,
         2,
@@ -103,7 +128,8 @@ def compute_item_importance(db: Session, item_id: int) -> tuple[float, dict]:
         "repair_consumers": repair_consumers,
         "recipe_consumers": recipe_consumers,
         "recipe_producers": recipe_producers,
-        "total_flow": round(total_flow, 2),
+        "is_currency": is_currency,
+        "total_flow": round(flow, 2),
         "price": round(price, 2),
         "price_component": round(price_component, 2),
         "flow_component": round(flow_component, 2),
@@ -118,8 +144,8 @@ def recompute_all_importance(db: Session) -> int:
     count = 0
     for item in items:
         score, _ = compute_item_importance(db, item.id)
-        if item.importance_score != score:
-            item.importance_score = score
+        if float(item.importance_score) != score:
+            item.importance_score = Decimal(str(score))
             count += 1
     db.flush()
     return count
@@ -144,8 +170,32 @@ def period_bounds(start: Optional[str], end: Optional[str]):
     return start_dt, end_dt
 
 
+def _period_aggregate(runs: list[DungeonRun]) -> dict:
+    """聚合一批副本记录的原始事实（Decimal）。"""
+    total_gross = sum((r.gross_value for r in runs), Decimal(0))
+    total_repair = sum((r.repair_cost for r in runs), Decimal(0))
+    total_consumable = sum((r.consumable_cost for r in runs), Decimal(0))
+    total_other = sum((r.other_cost for r in runs), Decimal(0))
+    total_cost = sum((r.total_cost for r in runs), Decimal(0))
+    net_profit = total_gross - total_cost
+    total_travel = sum((r.travel_minutes for r in runs), Decimal(0))
+    total_combat = sum((r.combat_minutes for r in runs), Decimal(0))
+    total_duration = sum((r.total_duration_minutes for r in runs), Decimal(0))
+    return {
+        "total_gross": total_gross,
+        "total_repair": total_repair,
+        "total_consumable": total_consumable,
+        "total_other": total_other,
+        "total_cost": total_cost,
+        "net_profit": net_profit,
+        "total_travel": total_travel,
+        "total_combat": total_combat,
+        "total_duration": total_duration,
+    }
+
+
 def analyze_period(db: Session, start: Optional[str] = None, end: Optional[str] = None) -> dict:
-    """周期副本经济分析（掉落/维修/消耗/其他/净利润/每小时）。"""
+    """周期副本经济分析（掉落/维修/消耗/其他/净利润/每小时 + RMB 估值）。"""
     start_dt, end_dt = period_bounds(start, end)
 
     runs = (
@@ -157,44 +207,52 @@ def analyze_period(db: Session, start: Optional[str] = None, end: Optional[str] 
         .scalars()
         .all()
     )
+    a = _period_aggregate(runs)
 
-    total_gross = sum(r.gross_value for r in runs)
-    total_repair = sum(r.repair_cost for r in runs)
-    total_consumable = sum(r.consumable_cost for r in runs)
-    total_other = sum(r.other_cost for r in runs)
-    total_cost = sum(r.total_cost for r in runs)
-    net_profit = total_gross - total_cost
-    total_duration = sum(r.total_duration_minutes for r in runs)
-    profit_per_hour = calculate_profit_per_hour(net_profit, total_duration)
-    cost_ratio = round(total_cost / total_gross, 4) if total_gross > 0 else 0.0
+    profit_per_hour = calculate_profit_per_hour(a["net_profit"], a["total_duration"])
+    cost_ratio = float(a["total_cost"] / a["total_gross"]) if a["total_gross"] > 0 else 0.0
+
+    # RMB 估值（基于记录时快照）
+    gross_fiat = sum(
+        (r.gross_value_fiat for r in runs if r.gross_value_fiat is not None), Decimal(0)
+    )
+    net_fiat = sum(
+        (r.net_profit_fiat for r in runs if r.net_profit_fiat is not None), Decimal(0)
+    )
+    profit_per_hour_fiat = calculate_profit_per_hour(net_fiat, a["total_duration"])
 
     # 成本构成
     cost_breakdown = [
-        {"name": "维修", "value": round(total_repair, 2)},
-        {"name": "消耗品", "value": round(total_consumable, 2)},
-        {"name": "其他", "value": round(total_other, 2)},
+        {"name": "维修", "value": round(float(a["total_repair"]), 2)},
+        {"name": "消耗品", "value": round(float(a["total_consumable"]), 2)},
+        {"name": "其他", "value": round(float(a["total_other"]), 2)},
     ]
 
     return {
         "start": start_dt.isoformat(),
         "end": end_dt.isoformat(),
         "run_count": len(runs),
-        "total_gross": round(total_gross, 2),
-        "total_repair": round(total_repair, 2),
-        "total_consumable": round(total_consumable, 2),
-        "total_other": round(total_other, 2),
-        "total_cost": round(total_cost, 2),
-        "net_profit": round(net_profit, 2),
-        "total_duration_minutes": round(total_duration, 2),
-        "profit_per_hour": profit_per_hour,
-        "cost_ratio": cost_ratio,
+        "total_gross": round(float(a["total_gross"]), 2),
+        "total_repair": round(float(a["total_repair"]), 2),
+        "total_consumable": round(float(a["total_consumable"]), 2),
+        "total_other": round(float(a["total_other"]), 2),
+        "total_cost": round(float(a["total_cost"]), 2),
+        "net_profit": round(float(a["net_profit"]), 2),
+        "total_travel_minutes": round(float(a["total_travel"]), 2),
+        "total_combat_minutes": round(float(a["total_combat"]), 2),
+        "total_duration_minutes": round(float(a["total_duration"]), 2),
+        "profit_per_hour": float(profit_per_hour),
+        "gross_value_fiat": round(float(gross_fiat), 2),
+        "net_profit_fiat": round(float(net_fiat), 2),
+        "profit_per_hour_fiat": float(profit_per_hour_fiat),
+        "cost_ratio": round(cost_ratio, 4),
         "cost_breakdown": cost_breakdown,
-        "is_loss": net_profit < 0,
+        "is_loss": a["net_profit"] < 0,
     }
 
 
 def dungeon_rankings(db: Session, start: Optional[str] = None, end: Optional[str] = None) -> list[dict]:
-    """副本收益排行：净利润 / 每小时收益 / 成本。"""
+    """副本收益排行：净利润 / 每小时收益 / 成本 / 维修占比。"""
     start_dt, end_dt = period_bounds(start, end)
     runs = (
         db.execute(
@@ -214,33 +272,47 @@ def dungeon_rankings(db: Session, start: Optional[str] = None, end: Optional[str
                 "dungeon_id": key,
                 "dungeon_name": r.dungeon.name if r.dungeon else "未知",
                 "run_count": 0,
-                "gross_value": 0.0,
-                "total_cost": 0.0,
-                "net_profit": 0.0,
-                "total_duration": 0.0,
-                "repair_cost": 0.0,
-                "consumable_cost": 0.0,
+                "gross_value": Decimal(0),
+                "total_cost": Decimal(0),
+                "net_profit": Decimal(0),
+                "repair_cost": Decimal(0),
+                "consumable_cost": Decimal(0),
+                "total_duration": Decimal(0),
+                "net_profit_fiat": Decimal(0),
             }
         d = agg[key]
         d["run_count"] += 1
         d["gross_value"] += r.gross_value
         d["total_cost"] += r.total_cost
         d["net_profit"] += r.net_profit
-        d["total_duration"] += r.total_duration_minutes
         d["repair_cost"] += r.repair_cost
         d["consumable_cost"] += r.consumable_cost
+        d["total_duration"] += r.total_duration_minutes
+        if r.net_profit_fiat is not None:
+            d["net_profit_fiat"] += r.net_profit_fiat
 
     result = []
     for d in agg.values():
-        d["gross_value"] = round(d["gross_value"], 2)
-        d["total_cost"] = round(d["total_cost"], 2)
-        d["net_profit"] = round(d["net_profit"], 2)
-        d["repair_cost"] = round(d["repair_cost"], 2)
-        d["consumable_cost"] = round(d["consumable_cost"], 2)
-        d["profit_per_hour"] = calculate_profit_per_hour(
-            d["net_profit"], d["total_duration"]
+        repair_ratio = (
+            float(d["repair_cost"] / d["gross_value"]) if d["gross_value"] > 0 else 0.0
         )
-        result.append(d)
+        result.append(
+            {
+                "dungeon_id": d["dungeon_id"],
+                "dungeon_name": d["dungeon_name"],
+                "run_count": d["run_count"],
+                "gross_value": round(float(d["gross_value"]), 2),
+                "total_cost": round(float(d["total_cost"]), 2),
+                "net_profit": round(float(d["net_profit"]), 2),
+                "repair_cost": round(float(d["repair_cost"]), 2),
+                "consumable_cost": round(float(d["consumable_cost"]), 2),
+                "repair_ratio": round(repair_ratio, 4),
+                "net_profit_fiat": round(float(d["net_profit_fiat"]), 2),
+                "profit_per_hour": float(
+                    calculate_profit_per_hour(d["net_profit"], d["total_duration"])
+                ),
+            }
+        )
 
     result.sort(key=lambda x: x["net_profit"], reverse=True)
     return result
@@ -258,9 +330,9 @@ def recipe_rankings(db: Session) -> list[dict]:
                 "recipe_name": r.recipe.name if r.recipe else "未知",
                 "attempted": 0,
                 "success": 0,
-                "material_cost": 0.0,
-                "revenue": 0.0,
-                "gross_profit": 0.0,
+                "material_cost": Decimal(0),
+                "revenue": Decimal(0),
+                "gross_profit": Decimal(0),
             }
         d = agg[key]
         d["attempted"] += r.attempted_count
@@ -271,18 +343,21 @@ def recipe_rankings(db: Session) -> list[dict]:
 
     result = []
     for d in agg.values():
-        d["success_rate"] = (
-            round(d["success"] / d["attempted"], 4) if d["attempted"] else 0.0
+        result.append(
+            {
+                "recipe_id": d["recipe_id"],
+                "recipe_name": d["recipe_name"],
+                "attempted": d["attempted"],
+                "success": d["success"],
+                "success_rate": round(d["success"] / d["attempted"], 4) if d["attempted"] else 0.0,
+                "material_cost": round(float(d["material_cost"]), 2),
+                "revenue": round(float(d["revenue"]), 2),
+                "gross_profit": round(float(d["gross_profit"]), 2),
+                "roi": round(float(d["gross_profit"] / d["material_cost"]), 4)
+                if d["material_cost"]
+                else 0.0,
+            }
         )
-        d["roi"] = (
-            round(d["gross_profit"] / d["material_cost"], 4)
-            if d["material_cost"]
-            else 0.0
-        )
-        d["material_cost"] = round(d["material_cost"], 2)
-        d["revenue"] = round(d["revenue"], 2)
-        d["gross_profit"] = round(d["gross_profit"], 2)
-        result.append(d)
 
     result.sort(key=lambda x: x["roi"], reverse=True)
     return result
@@ -309,10 +384,10 @@ def activity_efficiency(db: Session, start: Optional[str] = None, end: Optional[
             agg[key] = {
                 "activity_type": key,
                 "count": 0,
-                "gross_value": 0.0,
-                "total_cost": 0.0,
-                "net_profit": 0.0,
-                "duration_minutes": 0.0,
+                "gross_value": Decimal(0),
+                "total_cost": Decimal(0),
+                "net_profit": Decimal(0),
+                "duration_minutes": Decimal(0),
             }
         d = agg[key]
         d["count"] += 1
@@ -322,27 +397,35 @@ def activity_efficiency(db: Session, start: Optional[str] = None, end: Optional[
         d["duration_minutes"] += r.duration_minutes
 
     items = []
-    total_net = 0.0
-    total_duration = 0.0
+    total_net = Decimal(0)
+    total_duration = Decimal(0)
     for d in agg.values():
-        d["gross_value"] = round(d["gross_value"], 2)
-        d["total_cost"] = round(d["total_cost"], 2)
-        d["net_profit"] = round(d["net_profit"], 2)
-        d["profit_per_hour"] = calculate_profit_per_hour(
-            d["net_profit"], d["duration_minutes"]
-        )
         total_net += d["net_profit"]
         total_duration += d["duration_minutes"]
-        items.append(d)
+        items.append(
+            {
+                "activity_type": d["activity_type"],
+                "count": d["count"],
+                "gross_value": round(float(d["gross_value"]), 2),
+                "total_cost": round(float(d["total_cost"]), 2),
+                "net_profit": round(float(d["net_profit"]), 2),
+                "duration_minutes": round(float(d["duration_minutes"]), 2),
+                "profit_per_hour": float(
+                    calculate_profit_per_hour(d["net_profit"], d["duration_minutes"])
+                ),
+            }
+        )
 
     items.sort(key=lambda x: x["profit_per_hour"], reverse=True)
     best = items[0]["activity_type"] if items else None
 
     return {
         "activities": items,
-        "total_net_profit": round(total_net, 2),
-        "total_duration_minutes": round(total_duration, 2),
-        "avg_profit_per_hour": calculate_profit_per_hour(total_net, total_duration),
+        "total_net_profit": round(float(total_net), 2),
+        "total_duration_minutes": round(float(total_duration), 2),
+        "avg_profit_per_hour": float(
+            calculate_profit_per_hour(total_net, total_duration)
+        ),
         "best_activity": best,
     }
 
@@ -354,9 +437,11 @@ def dashboard(db: Session) -> dict:
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=7)
+    month_start = today_start - timedelta(days=30)
 
     today = analyze_period(db, today_start.isoformat(), now.isoformat())
     week = analyze_period(db, week_start.isoformat(), now.isoformat())
+    month = analyze_period(db, month_start.isoformat(), now.isoformat())
 
     top_dungeons = dungeon_rankings(db, week_start.isoformat(), now.isoformat())[:5]
     top_recipes = recipe_rankings(db)[:5]
@@ -364,7 +449,12 @@ def dashboard(db: Session) -> dict:
 
     # 最重要物品 TOP 5
     top_items = (
-        db.execute(select(Item).where(Item.is_active.is_(True)).order_by(Item.importance_score.desc()).limit(5))
+        db.execute(
+            select(Item)
+            .where(Item.is_active.is_(True))
+            .order_by(Item.importance_score.desc())
+            .limit(5)
+        )
         .scalars()
         .all()
     )
@@ -373,9 +463,9 @@ def dashboard(db: Session) -> dict:
             "id": i.id,
             "name": i.name,
             "category": i.category,
-            "importance_score": i.importance_score,
-            "vendor_buy_price": i.vendor_buy_price,
-            "market_price": i.market_price,
+            "importance_score": float(i.importance_score),
+            "vendor_buy_price": _f_or_none(i.vendor_buy_price),
+            "market_price": _f_or_none(i.market_price),
         }
         for i in top_items
     ]
@@ -383,6 +473,7 @@ def dashboard(db: Session) -> dict:
     return {
         "today": today,
         "week": week,
+        "month": month,
         "top_dungeons": top_dungeons,
         "top_recipes": top_recipes,
         "activities": activities,

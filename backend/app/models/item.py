@@ -2,18 +2,21 @@
 
 所有其他业务（掉落/收购/价格/维修/炼金/制造/消耗/产出/分析）都必须通过
 item_id 引用本表，禁止使用孤立的物品名称字符串。
+
+V2：一个物品可拥有多个 Role（货币/材料/装备/掉落…），价格字段统一为 Numeric。
 """
 
 from datetime import datetime
+from decimal import Decimal
 from typing import List, Optional
 
 from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
-    Float,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
 )
@@ -21,6 +24,19 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.base import TimestampMixin
+
+# 物品角色（一个物品可同时具备多个）
+ITEM_ROLES = (
+    "MATERIAL",
+    "EQUIPMENT",
+    "CONSUMABLE",
+    "CURRENCY",
+    "TRADEABLE",
+    "DUNGEON_DROP",
+    "REPAIR_MATERIAL",
+    "RECIPE_MATERIAL",
+    "RECIPE_OUTPUT",
+)
 
 
 class Item(Base, TimestampMixin):
@@ -38,23 +54,40 @@ class Item(Base, TimestampMixin):
     stack_size: Mapped[Optional[int]] = mapped_column(Integer)
     tags: Mapped[Optional[list]] = mapped_column(JSON, default=list)
 
-    # 三种价值来源（当前值，历史见 item_price_history）
-    vendor_buy_price: Mapped[Optional[float]] = mapped_column(Float)
-    market_price: Mapped[Optional[float]] = mapped_column(Float)
-    manual_price: Mapped[Optional[float]] = mapped_column(Float)
+    # 三种价值来源（当前值，单位为基础货币=钻石；历史见 item_price_history）
+    vendor_buy_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    market_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
+    manual_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
 
-    importance_score: Mapped[float] = mapped_column(Float, default=0.0)
+    importance_score: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    roles: Mapped[List["ItemRole"]] = relationship(
+        back_populates="item", cascade="all, delete-orphan"
+    )
     images: Mapped[List["ItemImage"]] = relationship(
         back_populates="item", cascade="all, delete-orphan"
     )
     price_history: Mapped[List["ItemPriceHistory"]] = relationship(
-        back_populates="item", cascade="all, delete-orphan"
+        back_populates="item",
+        cascade="all, delete-orphan",
+        foreign_keys="ItemPriceHistory.item_id",
     )
     relations_out: Mapped[List["ItemRelation"]] = relationship(
         back_populates="item", cascade="all, delete-orphan"
     )
+
+
+class ItemRole(Base, TimestampMixin):
+    """物品角色（多对多语义，一个物品可属于多个角色）。"""
+
+    __tablename__ = "item_roles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
+    role: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+
+    item: Mapped["Item"] = relationship(back_populates="roles")
 
 
 class ItemImage(Base, TimestampMixin):
@@ -78,16 +111,19 @@ class ItemPriceHistory(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
     price_type: Mapped[str] = mapped_column(String(32), nullable=False)  # vendor/market/manual
-    price: Mapped[float] = mapped_column(Float, nullable=False)
-    quantity: Mapped[Optional[float]] = mapped_column(Float)
+    price: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
+    # 价格计价单位（货币面额 Item）；为空时表示基础货币（钻石）
+    currency_item_id: Mapped[Optional[int]] = mapped_column(ForeignKey("items.id"))
+    quantity: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
     source: Mapped[Optional[str]] = mapped_column(String(64))
     observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
 
-    item: Mapped["Item"] = relationship(back_populates="price_history")
+    item: Mapped["Item"] = relationship(back_populates="price_history", foreign_keys=[item_id])
 
 
 class ItemRelation(Base, TimestampMixin):
-    """物品关系：Dungeon DROPS Item / Recipe CONSUMES/PRODUCES Item / 维修 REQUIRES Item 等。
+    """物品关系：Dungeon DROPS Item / Recipe CONSUMES+PRODUCES Item / 维修 REQUIRES Item 等。
 
     通过 source_type + source_id 指向具体业务实体，target_item_id 指向物品。
     关系类型可扩展。
@@ -100,7 +136,7 @@ class ItemRelation(Base, TimestampMixin):
     source_type: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     source_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
     target_item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
-    quantity: Mapped[float] = mapped_column(Float, default=1.0)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=1)
     metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSON, default=dict)
 
     item: Mapped["Item"] = relationship(back_populates="relations_out")

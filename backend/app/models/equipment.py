@@ -1,8 +1,14 @@
-"""装备与维修系统。装备维修需求引用 item_id（材料）。"""
+"""装备与维修系统。
 
+V2：维修需求不再有 currency_cost 这种单独字段，统一建模为「任意数量的 Item 消耗」。
+钻石、精钢锭等在数据库层没有区别，都是 Repair Requirement Item，
+只有 Currency System 再决定货币类 Item 的基础价值。
+"""
+
+from decimal import Decimal
 from typing import List, Optional
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -24,13 +30,14 @@ class Equipment(Base, TimestampMixin):
 
 
 class EquipmentRepairRequirement(Base, TimestampMixin):
+    """维修需求：每一行就是一个 Item 的消耗量。"""
+
     __tablename__ = "equipment_repair_requirements"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     equipment_id: Mapped[int] = mapped_column(ForeignKey("equipments.id"), index=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
-    quantity: Mapped[float] = mapped_column(Float, nullable=False)
-    currency_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
 
     equipment: Mapped["Equipment"] = relationship(back_populates="repair_requirements")
     item: Mapped["Item"] = relationship()

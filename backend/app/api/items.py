@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.analysis.service import compute_item_importance
-from app.models.item import Item, ItemImage, ItemRelation
+from app.models.item import Item, ItemImage, ItemRelation, ItemRole
 from app.repositories.item import ItemRepository
 from app.schemas.item import (
     ItemCreate,
@@ -33,6 +33,7 @@ router = APIRouter(prefix="/items", tags=["items"])
 
 def _item_out(db: Session, item: Item) -> ItemOut:
     img, rel = ItemRepository(db).with_counts(item.id)
+    roles = [r.role for r in item.roles]
     return ItemOut(
         id=item.id,
         name=item.name,
@@ -45,6 +46,7 @@ def _item_out(db: Session, item: Item) -> ItemOut:
         level=item.level,
         stack_size=item.stack_size,
         tags=item.tags or [],
+        roles=roles,
         vendor_buy_price=item.vendor_buy_price,
         market_price=item.market_price,
         manual_price=item.manual_price,
@@ -97,8 +99,12 @@ def create_item(payload: ItemCreate, db: Session = Depends(get_db)):
     existing = db.execute(select(Item).where(Item.name == payload.name)).scalar_one_or_none()
     if existing:
         raise HTTPException(409, f"物品名称「{payload.name}」已存在")
-    item = Item(**payload.model_dump())
+    data = payload.model_dump(exclude={"roles"})
+    item = Item(**data)
     db.add(item)
+    db.flush()
+    for role in payload.roles:
+        db.add(ItemRole(item_id=item.id, role=role))
     db.commit()
     db.refresh(item)
     return _item_out(db, item)
@@ -117,6 +123,12 @@ def get_item(item_id: int, db: Session = Depends(get_db)):
     base["relations"] = [
         ItemRelationOut.model_validate(r).model_dump() for r in item.relations_out
     ]
+    # 当前价值（钻石 + RMB 估值）
+    try:
+        v = ValuationService(db).value(item.id, 1, "auto")
+        base["current_value"] = v.as_dict()
+    except Exception:
+        base["current_value"] = None
     return base
 
 
@@ -125,9 +137,14 @@ def update_item(item_id: int, payload: ItemUpdate, db: Session = Depends(get_db)
     item = db.get(Item, item_id)
     if item is None:
         raise HTTPException(404, "物品不存在")
-    data = payload.model_dump(exclude_unset=True)
+    data = payload.model_dump(exclude_unset=True, exclude={"roles"})
     for k, v in data.items():
         setattr(item, k, v)
+    if payload.roles is not None:
+        for r in item.roles:
+            db.delete(r)
+        for role in payload.roles:
+            db.add(ItemRole(item_id=item.id, role=role))
     db.commit()
     db.refresh(item)
     return _item_out(db, item)

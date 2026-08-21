@@ -15,6 +15,7 @@ const menuItems = [
   { path: '/production', title: '生产记录', icon: 'Cpu' },
   { path: '/activities', title: '活动', icon: 'Calendar' },
   { path: '/analysis', title: '周期分析', icon: 'TrendCharts' },
+  { path: '/currency', title: '货币体系', icon: 'Coin' },
 ]
 
 const activePath = ref(route.path)

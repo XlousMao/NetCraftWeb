@@ -1,23 +1,32 @@
-"""Demo 数据种子。
+"""Demo 数据种子（奶块 / NetCraft 特化）。
 
-首次启动生成一套完整、体现真实关系的数据，让用户打开即见完整 Dashboard。
-- 20 物品 / 5 副本 / 3 装备 / 5 配方 / 10+ 价格历史
-- 20 副本记录（含掉落/消耗/维修）/ 10 炼金生产记录
-- 自动构建物品关系与重要性评分
+生成一套体现真实关系、可验证「货币→钻石→RMB」全链路的演示数据：
+- 货币体系：钻石(1) / 钻石块(9) / 钻石结晶(99)
+- RMB 观察：多日历史汇率（99 钻石块 = 25 / 27.1 RMB …）
+- 物品 + 角色（材料/装备/消耗品/货币/掉落/维修材料/配方材料）
+- 副本 / 装备（多物品维修）/ 配方（多货币材料）
+- 价格历史 / 副本记录（掉落含钻石、钻石块）/ 炼金记录
 
-幂等：若已存在物品则跳过。
+幂等：若已存在数据则跳过。
 """
 
 from __future__ import annotations
 
 import random
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from app.db.init_db import init_db
 from app.db.session import SessionLocal
+from app.models.currency import (
+    CurrencyConversionRule,
+    CurrencyDenomination,
+    CurrencySystem,
+    FiatExchangeObservation,
+)
 from app.models.dungeon import Dungeon
 from app.models.equipment import Equipment, EquipmentRepairRequirement
-from app.models.item import Item
+from app.models.item import Item, ItemRole
 from app.models.recipe import Recipe, RecipeMaterial, RecipeOutput
 from app.schemas.dungeon import (
     ConsumptionCreate,
@@ -33,57 +42,120 @@ from app.services.valuation import ValuationService
 from app.analysis.service import recompute_all_importance
 
 
+def _seed_currency(db) -> dict[str, Item]:
+    """建立奶块钻石经济体系：钻石 / 钻石块 / 钻石结晶。"""
+    diamond = Item(name="钻石", display_name="钻石", category="货币",
+                   description="奶块基础货币，一切经济分析归一化为钻石")
+    diamond_block = Item(name="钻石块", display_name="钻石块", category="货币",
+                         description="由 9 个钻石合成")
+    diamond_crystal = Item(name="钻石结晶", display_name="钻石结晶", category="货币",
+                           description="由 11 个钻石块合成，即 99 钻石")
+    for i in (diamond, diamond_block, diamond_crystal):
+        db.add(i)
+    db.flush()
+
+    for item, role in [
+        (diamond, ["CURRENCY", "TRADEABLE", "DUNGEON_DROP", "REPAIR_MATERIAL"]),
+        (diamond_block, ["CURRENCY", "TRADEABLE", "DUNGEON_DROP", "REPAIR_MATERIAL"]),
+        (diamond_crystal, ["CURRENCY", "TRADEABLE", "DUNGEON_DROP"]),
+    ]:
+        for r in role:
+            db.add(ItemRole(item_id=item.id, role=r))
+
+    system = CurrencySystem(
+        name="奶块钻石经济体系",
+        description="基础货币为钻石；钻石块=9钻石，钻石结晶=99钻石",
+        base_currency_item_id=diamond.id,
+    )
+    db.add(system)
+    db.flush()
+
+    for item, base_value, is_base in [
+        (diamond, Decimal(1), True),
+        (diamond_block, Decimal(9), False),
+        (diamond_crystal, Decimal(99), False),
+    ]:
+        db.add(CurrencyDenomination(
+            currency_system_id=system.id, item_id=item.id,
+            base_value=base_value, is_base=is_base,
+        ))
+    db.add(CurrencyConversionRule(
+        currency_system_id=system.id, from_item_id=diamond_block.id,
+        to_item_id=diamond.id, factor=Decimal(9),
+    ))
+    db.add(CurrencyConversionRule(
+        currency_system_id=system.id, from_item_id=diamond_crystal.id,
+        to_item_id=diamond_block.id, factor=Decimal(11),
+    ))
+    db.flush()
+    return {"钻石": diamond, "钻石块": diamond_block, "钻石结晶": diamond_crystal}
+
+
+def _seed_fiat(db, currency: dict[str, Item]):
+    """多日 RMB 历史观察：99 钻石块 = 25 / 26.4 / 27.1 RMB。"""
+    now = datetime.now(timezone.utc)
+    block = currency["钻石块"]
+    observations = [
+        (Decimal("25.0"), now - timedelta(days=6)),
+        (Decimal("26.4"), now - timedelta(days=3)),
+        (Decimal("27.1"), now),
+    ]
+    for amount, obs_at in observations:
+        db.add(FiatExchangeObservation(
+            currency_item_id=block.id, quantity=Decimal(99),
+            fiat_currency="CNY", fiat_amount=amount,
+            observed_at=obs_at, source="seed",
+        ))
+
+
 def _seed_items(db) -> dict[str, Item]:
-    """创建 20 个物品，返回 name -> Item 映射。"""
-    items = [
-        ("精钢锭", "材料", 80, 105, "高级金属锭，装备维修核心材料"),
-        ("钻石", "材料", 150, 180, "贵重宝石，高级装备维修材料"),
-        ("魔晶", "材料", 120, 140, "蕴含魔力的晶体，炼金原料"),
-        ("红草", "材料", 25, 30, "常见药草，炼金基础材料"),
-        ("空瓶", "材料", 5, 8, "炼金容器"),
-        ("银矿", "材料", 35, 42, "常见矿石"),
-        ("铁矿", "材料", 15, 20, "基础矿石"),
-        ("皮革", "材料", 22, 28, "怪物皮革，装备材料"),
-        ("秘银锭", "材料", 200, 240, "稀有金属锭"),
-        ("奥术水晶", "材料", 90, 110, "奥术能量结晶"),
-        ("符文石", "材料", 45, 55, "铭刻符文的石头"),
-        ("暗影之尘", "材料", 130, 160, "暗影生物掉落的粉末"),
-        ("生命药水", "消耗品", 40, 55, "恢复少量生命"),
-        ("高级生命药水", "消耗品", 120, 150, "恢复大量生命"),
-        ("强力治疗药水", "消耗品", 85, 100, "强效治疗"),
-        ("魔法卷轴", "消耗品", 60, 75, "一次性魔法道具"),
-        ("传送卷轴", "消耗品", 30, 35, "回城道具"),
-        ("龙骑士剑", "装备", None, 5000, "传奇单手剑"),
-        ("秘银甲", "装备", None, 4200, "稀有铠甲"),
-        ("金币袋", "货币", 100, 100, "可兑换 100 金币"),
+    """奶块主题物品：材料/消耗品/装备。"""
+    specs = [
+        ("精钢锭", "材料", 80, 105, ["MATERIAL", "REPAIR_MATERIAL", "RECIPE_OUTPUT", "TRADEABLE"], "高级金属锭，装备维修核心材料"),
+        ("铁矿", "材料", 15, 20, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "基础矿石"),
+        ("银矿", "材料", 35, 42, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "常见矿石"),
+        ("秘银锭", "材料", 200, 240, ["MATERIAL", "RECIPE_OUTPUT", "TRADEABLE"], "稀有金属锭"),
+        ("红草", "材料", 25, 30, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "常见药草"),
+        ("空瓶", "材料", 5, 8, ["MATERIAL", "RECIPE_MATERIAL"], "炼金容器"),
+        ("奥术水晶", "材料", 90, 110, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "奥术能量结晶"),
+        ("符文石", "材料", 45, 55, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "铭刻符文的石头"),
+        ("暗影之尘", "材料", 130, 160, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "暗影生物掉落的粉末"),
+        ("皮革", "材料", 22, 28, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "怪物皮革"),
+        ("生命药水", "消耗品", 40, 55, ["CONSUMABLE", "RECIPE_OUTPUT", "TRADEABLE"], "恢复少量生命"),
+        ("高级生命药水", "消耗品", 120, 150, ["CONSUMABLE", "RECIPE_OUTPUT", "TRADEABLE"], "恢复大量生命"),
+        ("强力治疗药水", "消耗品", 85, 100, ["CONSUMABLE", "RECIPE_OUTPUT"], "强效治疗"),
+        ("魔法卷轴", "消耗品", 60, 75, ["CONSUMABLE", "DUNGEON_DROP"], "一次性魔法道具"),
+        ("传送卷轴", "消耗品", 30, 35, ["CONSUMABLE", "DUNGEON_DROP"], "回城道具"),
+        ("龙骑士剑", "装备", None, 5000, ["EQUIPMENT", "TRADEABLE"], "传奇单手剑"),
+        ("秘银甲", "装备", None, 4200, ["EQUIPMENT", "TRADEABLE"], "稀有铠甲"),
+        ("符文法杖", "装备", None, 4600, ["EQUIPMENT", "TRADEABLE"], "秘法法杖"),
     ]
     result: dict[str, Item] = {}
-    for name, category, vendor, market, desc in items:
+    for name, category, vendor, market, roles, desc in specs:
         item = Item(
-            name=name,
-            display_name=name,
-            category=category,
-            description=desc,
-            vendor_buy_price=vendor,
-            market_price=market,
+            name=name, display_name=name, category=category, description=desc,
+            vendor_buy_price=Decimal(vendor) if vendor is not None else None,
+            market_price=Decimal(market) if market is not None else None,
             tags=[],
         )
         db.add(item)
+        db.flush()
+        for r in roles:
+            db.add(ItemRole(item_id=item.id, role=r))
         result[name] = item
-    db.flush()
     return result
 
 
 def _seed_dungeons(db) -> list[Dungeon]:
-    dungeons = [
+    names = [
         ("黑暗洞穴", "低阶矿洞，产出铁矿与暗影之尘"),
         ("熔岩矿坑", "产出精钢锭、钻石与符文石"),
-        ("亡灵古堡", "产出魔晶、暗影之尘与传送卷轴"),
+        ("亡灵古堡", "产出钻石块、暗影之尘与传送卷轴"),
         ("翡翠森林", "产出药草、皮革与生命药水"),
-        ("龙之巢穴", "高价值副本，产出钻石、魔晶与奥术水晶"),
+        ("龙之巢穴", "高价值副本，产出钻石结晶、钻石块与奥术水晶"),
     ]
     result = []
-    for name, desc in dungeons:
+    for name, desc in names:
         d = Dungeon(name=name, description=desc)
         db.add(d)
         result.append(d)
@@ -91,38 +163,41 @@ def _seed_dungeons(db) -> list[Dungeon]:
     return result
 
 
-def _seed_equipments(db, items: dict[str, Item]) -> list[Equipment]:
+def _seed_equipments(db, items: dict[str, Item], currency: dict[str, Item]) -> list[Equipment]:
+    """装备维修需求：材料 + 钻石 + 钻石块（多物品，无 currency_cost）。"""
     specs = [
-        ("龙骑士剑", [("精钢锭", 3), ("钻石", 2)], 200),
-        ("秘银甲", [("秘银锭", 2), ("皮革", 3)], 150),
-        ("符文法杖", [("符文石", 3), ("奥术水晶", 1)], 180),
+        ("龙骑士剑", [("精钢锭", 3), ("钻石", 20), ("钻石块", 2)]),
+        ("秘银甲", [("秘银锭", 2), ("皮革", 3), ("钻石", 10)]),
+        ("符文法杖", [("符文石", 3), ("奥术水晶", 1), ("钻石块", 1)]),
     ]
     result = []
-    for name, reqs, currency in specs:
+    for name, reqs in specs:
         eq = Equipment(name=name)
         db.add(eq)
         db.flush()
         for item_name, qty in reqs:
-            db.add(
-                EquipmentRepairRequirement(
-                    equipment_id=eq.id,
-                    item_id=items[item_name].id,
-                    quantity=qty,
-                    currency_cost=currency / len(reqs),
-                )
-            )
+            target = items.get(item_name) or currency.get(item_name)
+            db.add(EquipmentRepairRequirement(
+                equipment_id=eq.id, item_id=target.id, quantity=Decimal(qty),
+            ))
         result.append(eq)
     db.flush()
     return result
 
 
-def _seed_recipes(db, items: dict[str, Item]) -> list[Recipe]:
+def _seed_recipes(db, items: dict[str, Item], currency: dict[str, Item]) -> list[Recipe]:
+    """配方：材料 + 钻石/钻石块（多货币）。"""
     specs = [
-        ("高级生命药水", "炼金", 0.90, [("红草", 3), ("魔晶", 2), ("空瓶", 1)], [("高级生命药水", 1)]),
-        ("生命药水", "炼金", 0.95, [("红草", 2), ("空瓶", 1)], [("生命药水", 1)]),
-        ("秘银锭", "制造", 0.85, [("银矿", 2), ("符文石", 1)], [("秘银锭", 1)]),
-        ("强力治疗药水", "炼金", 0.88, [("生命药水", 2), ("奥术水晶", 1)], [("强力治疗药水", 1)]),
-        ("精钢锭", "制造", 0.90, [("铁矿", 3), ("暗影之尘", 1)], [("精钢锭", 1)]),
+        ("高级生命药水", "炼金", Decimal("0.90"),
+         [("红草", 3), ("奥术水晶", 2), ("空瓶", 1)], [("高级生命药水", 1)]),
+        ("生命药水", "炼金", Decimal("0.95"),
+         [("红草", 2), ("空瓶", 1)], [("生命药水", 1)]),
+        ("秘银锭", "制造", Decimal("0.85"),
+         [("银矿", 2), ("符文石", 1), ("钻石", 5)], [("秘银锭", 1)]),
+        ("强力治疗药水", "炼金", Decimal("0.88"),
+         [("生命药水", 2), ("奥术水晶", 1)], [("强力治疗药水", 1)]),
+        ("精钢锭", "制造", Decimal("0.90"),
+         [("铁矿", 3), ("暗影之尘", 1), ("钻石块", 1)], [("精钢锭", 1)]),
     ]
     result = []
     for name, category, rate, mats, outs in specs:
@@ -130,52 +205,52 @@ def _seed_recipes(db, items: dict[str, Item]) -> list[Recipe]:
         db.add(r)
         db.flush()
         for item_name, qty in mats:
-            db.add(RecipeMaterial(recipe_id=r.id, item_id=items[item_name].id, quantity=qty))
+            target = items.get(item_name) or currency.get(item_name)
+            db.add(RecipeMaterial(recipe_id=r.id, item_id=target.id, quantity=Decimal(qty)))
         for item_name, qty in outs:
-            db.add(RecipeOutput(recipe_id=r.id, item_id=items[item_name].id, quantity=qty))
+            target = items.get(item_name) or currency.get(item_name)
+            db.add(RecipeOutput(recipe_id=r.id, item_id=target.id, quantity=Decimal(qty)))
         result.append(r)
     db.flush()
     return result
 
 
 def _seed_price_history(db, items: dict[str, Item]):
-    """为精钢锭等关键物品生成 10+ 条历史价格。"""
+    """为关键物品生成历史价格（含不同时间点）。"""
     vs = ValuationService(db)
     now = datetime.now(timezone.utc)
     hist = [
-        ("精钢锭", "vendor", [70, 72, 75, 78, 80, 80]),
-        ("钻石", "vendor", [130, 140, 145, 150]),
+        ("精钢锭", "vendor", [70, 72, 75, 78, 80]),
         ("精钢锭", "market", [90, 95, 100, 105]),
-        ("魔晶", "vendor", [110, 115, 120]),
+        ("秘银锭", "vendor", [180, 190, 200]),
+        ("红草", "vendor", [22, 24, 25]),
         ("高级生命药水", "market", [130, 140, 150]),
     ]
     for name, ptype, prices in hist:
         item = items[name]
         for i, p in enumerate(prices):
             vs.record_price(
-                item.id,
-                ptype,
-                p,
-                source="seed",
+                item.id, ptype, Decimal(p), source="seed",
                 observed_at=now - timedelta(days=len(prices) - i),
             )
     db.flush()
 
 
-# 各副本掉落表
+# 各副本掉落表（含货币物品）
 _DUNGEON_LOOT_TABLE = {
     "黑暗洞穴": [("铁矿", 12, 20), ("银矿", 4, 10), ("暗影之尘", 1, 3)],
-    "熔岩矿坑": [("铁矿", 8, 15), ("精钢锭", 2, 6), ("符文石", 1, 4), ("钻石", 0, 2)],
-    "亡灵古堡": [("魔晶", 2, 6), ("暗影之尘", 1, 4), ("传送卷轴", 1, 3)],
+    "熔岩矿坑": [("铁矿", 8, 15), ("精钢锭", 2, 6), ("符文石", 1, 4), ("钻石", 5, 15)],
+    "亡灵古堡": [("钻石块", 1, 3), ("暗影之尘", 1, 4), ("传送卷轴", 1, 3)],
     "翡翠森林": [("红草", 6, 14), ("皮革", 2, 6), ("生命药水", 1, 4)],
-    "龙之巢穴": [("钻石", 1, 4), ("魔晶", 2, 6), ("精钢锭", 2, 5), ("奥术水晶", 1, 3)],
+    "龙之巢穴": [("钻石结晶", 1, 2), ("钻石块", 2, 5), ("奥术水晶", 1, 3), ("钻石", 10, 30)],
 }
 
 
-def _seed_runs(db, items: dict[str, Item], dungeons: list[Dungeon]):
+def _seed_runs(db, items: dict[str, Item], currency: dict[str, Item], dungeons: list[Dungeon]):
     rng = random.Random(42)
     svc = DungeonService(db)
     now = datetime.now(timezone.utc)
+    all_items = {**items, **currency}
 
     for i in range(20):
         dungeon = dungeons[i % len(dungeons)]
@@ -184,21 +259,19 @@ def _seed_runs(db, items: dict[str, Item], dungeons: list[Dungeon]):
         for item_name, lo, hi in _DUNGEON_LOOT_TABLE[dungeon.name]:
             qty = rng.randint(lo, hi)
             if qty > 0:
-                loots.append(LootCreate(item_id=items[item_name].id, quantity=qty))
+                loots.append(LootCreate(item_id=all_items[item_name].id, quantity=qty))
 
         consumptions = [
-            ConsumptionCreate(item_id=items["生命药水"].id, quantity=rng.randint(1, 5)),
+            ConsumptionCreate(item_id=all_items["生命药水"].id, quantity=rng.randint(1, 5)),
         ]
         if rng.random() < 0.4:
             consumptions.append(
-                ConsumptionCreate(item_id=items["传送卷轴"].id, quantity=rng.randint(1, 2))
+                ConsumptionCreate(item_id=all_items["传送卷轴"].id, quantity=rng.randint(1, 2))
             )
 
-        # 维修：随机一件装备
-        equipment_choices = [1, 2, 3]  # 对应龙骑士剑/秘银甲/符文法杖
         repairs = []
         if rng.random() < 0.8:
-            repairs.append(RepairLineCreate(equipment_id=rng.choice(equipment_choices)))
+            repairs.append(RepairLineCreate(equipment_id=rng.choice([1, 2, 3])))
 
         payload = DungeonRunCreate(
             dungeon_id=dungeon.id,
@@ -206,7 +279,7 @@ def _seed_runs(db, items: dict[str, Item], dungeons: list[Dungeon]):
             travel_minutes=rng.randint(3, 12),
             combat_minutes=rng.randint(15, 45),
             death_count=rng.randint(0, 2),
-            other_cost=rng.randint(0, 200),
+            other_cost=rng.randint(0, 30),
             loots=loots,
             consumptions=consumptions,
             repairs=repairs,
@@ -223,7 +296,7 @@ def _seed_production(db, recipes: list[Recipe]):
     for i in range(10):
         recipe = recipes[i % len(recipes)]
         attempted = rng.randint(20, 100)
-        success = int(attempted * (recipe.expected_success_rate + rng.uniform(-0.08, 0.05)))
+        success = int(attempted * (float(recipe.expected_success_rate) + rng.uniform(-0.08, 0.05)))
         success = max(0, min(attempted, success))
         payload = ProductionRecordCreate(
             recipe_id=recipe.id,
@@ -242,24 +315,38 @@ def seed() -> None:
     try:
         from sqlalchemy import select
 
-        if db.execute(select(Item).limit(1)).first():
+        from app.models.currency import CurrencySystem
+
+        has_items = db.execute(select(Item).limit(1)).first() is not None
+        has_currency = (
+            db.execute(select(CurrencySystem).limit(1)).first() is not None
+        )
+
+        if has_items and has_currency:
             print("[seed] 已存在数据，跳过 Demo 种子")
             return
+        if has_items and not has_currency:
+            print(
+                "[seed] 检测到 V1 旧数据但无货币体系，无法无损升级，"
+                "请重建数据：docker compose down -v && docker compose up -d --build"
+            )
+            return
 
+        currency = _seed_currency(db)
+        _seed_fiat(db, currency)
         items = _seed_items(db)
         dungeons = _seed_dungeons(db)
-        _seed_equipments(db, items)
-        recipes = _seed_recipes(db, items)
+        _seed_equipments(db, items, currency)
+        recipes = _seed_recipes(db, items, currency)
         _seed_price_history(db, items)
-        _seed_runs(db, items, dungeons)
+        _seed_runs(db, items, currency, dungeons)
         _seed_production(db, recipes)
 
-        # 构建关系 + 重算重要性
         RelationService(db).sync_all()
         recompute_all_importance(db)
 
         db.commit()
-        print("[seed] Demo 数据生成完成")
+        print("[seed] 奶块 Demo 数据生成完成")
     finally:
         db.close()
 

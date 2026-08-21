@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field
 class RepairRequirementCreate(BaseModel):
     item_id: int
     quantity: float = Field(..., gt=0)
-    currency_cost: float = 0.0
 
 
 class RepairRequirementOut(BaseModel):
@@ -20,7 +19,6 @@ class RepairRequirementOut(BaseModel):
     item_id: int
     item_name: Optional[str] = None
     quantity: float
-    currency_cost: float
 
 
 class EquipmentCreate(BaseModel):

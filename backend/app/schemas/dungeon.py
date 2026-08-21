@@ -45,12 +45,14 @@ class ConsumptionCreate(BaseModel):
 
 
 class RepairLineCreate(BaseModel):
-    """一次维修记录：按装备模板或手动材料。"""
+    """一次维修记录：按装备模板自动展开，或手动指定 item + quantity。
+
+    V2：维修由任意 Item 组成（材料 + 钻石 + 钻石块…），不再有 currency_cost。
+    """
 
     equipment_id: Optional[int] = None
     item_id: Optional[int] = None
     quantity: Optional[float] = None
-    currency_cost: float = 0.0
     policy: str = "auto"
 
 
@@ -79,6 +81,9 @@ class LootOut(BaseModel):
     valuation_unit_price: float
     valuation_total: float
     valuation_source: str
+    valuation_currency_item_id: Optional[int] = None
+    base_currency_value: float
+    fiat_value: Optional[float] = None
     valuation_time: datetime
 
 
@@ -93,6 +98,9 @@ class ConsumptionOut(BaseModel):
     valuation_unit_price: float
     valuation_total: float
     valuation_source: str
+    valuation_currency_item_id: Optional[int] = None
+    base_currency_value: float
+    fiat_value: Optional[float] = None
     valuation_time: datetime
 
 
@@ -116,6 +124,9 @@ class DungeonRunOut(BaseModel):
     total_cost: float
     net_profit: float
     profit_per_hour: float
+    gross_value_fiat: Optional[float] = None
+    net_profit_fiat: Optional[float] = None
+    profit_per_hour_fiat: Optional[float] = None
     created_at: datetime
     loots: List[LootOut] = Field(default_factory=list)
     consumptions: List[ConsumptionOut] = Field(default_factory=list)

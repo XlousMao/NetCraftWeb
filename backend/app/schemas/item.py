@@ -17,6 +17,7 @@ class ItemBase(BaseModel):
     level: Optional[int] = None
     stack_size: Optional[int] = None
     tags: List[str] = Field(default_factory=list)
+    roles: List[str] = Field(default_factory=list)
     vendor_buy_price: Optional[float] = None
     market_price: Optional[float] = None
     manual_price: Optional[float] = None
@@ -38,6 +39,7 @@ class ItemUpdate(BaseModel):
     level: Optional[int] = None
     stack_size: Optional[int] = None
     tags: Optional[List[str]] = None
+    roles: Optional[List[str]] = None
     vendor_buy_price: Optional[float] = None
     market_price: Optional[float] = None
     manual_price: Optional[float] = None
@@ -72,9 +74,11 @@ class ItemImageOut(BaseModel):
 class PriceHistoryCreate(BaseModel):
     price_type: str = "vendor"  # vendor | market | manual
     price: float = Field(..., gt=0)
+    currency_item_id: Optional[int] = None
     quantity: Optional[float] = None
     source: Optional[str] = None
     observed_at: Optional[datetime] = None
+    notes: Optional[str] = None
 
 
 class PriceHistoryOut(BaseModel):
@@ -84,9 +88,11 @@ class PriceHistoryOut(BaseModel):
     item_id: int
     price_type: str
     price: float
+    currency_item_id: Optional[int] = None
     quantity: Optional[float] = None
     source: Optional[str] = None
     observed_at: datetime
+    notes: Optional[str] = None
     created_at: datetime
 
 
@@ -100,7 +106,7 @@ class PriceStats(BaseModel):
 
 
 class ItemRelationOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     id: int
     relation_type: str
@@ -108,7 +114,7 @@ class ItemRelationOut(BaseModel):
     source_id: int
     target_item_id: int
     quantity: float
-    metadata_: Optional[dict] = Field(default=None, alias="metadata")
+    metadata_: Optional[dict] = Field(default=None, validation_alias="metadata_", serialization_alias="metadata")
     created_at: datetime
 
 
@@ -116,3 +122,4 @@ class ItemDetailOut(ItemOut):
     images: List[ItemImageOut] = Field(default_factory=list)
     price_history: List[PriceHistoryOut] = Field(default_factory=list)
     relations: List[ItemRelationOut] = Field(default_factory=list)
+    current_value: Optional[dict] = None

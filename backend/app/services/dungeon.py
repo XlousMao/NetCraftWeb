@@ -1,12 +1,14 @@
 """副本服务：创建副本记录并在事务内完成掉落/消耗/维修的估值与收益计算。
 
-关键原则：所有实际发生的交易、掉落、消耗、生产成本都保存估值快照，
-历史记录不被当前价格污染。
+V2 关键：
+  - 所有掉落/消耗/维修保存估值快照（unit_price + currency + base_currency_value + fiat_value）。
+  - 维修由任意 Item 组成（材料 + 钻石 + 钻石块…），统一走货币引擎换算。
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
@@ -32,7 +34,8 @@ from app.schemas.dungeon import (
     RepairLineCreate,
 )
 from app.services.activity import ActivityService
-from app.services.valuation import ValuationService
+from app.services.currency import q_money
+from app.services.valuation import ValuationResult, ValuationService
 
 
 class DungeonService:
@@ -49,8 +52,8 @@ class DungeonService:
             dungeon_id=payload.dungeon_id,
             started_at=payload.started_at,
             ended_at=payload.ended_at,
-            travel_minutes=payload.travel_minutes,
-            combat_minutes=payload.combat_minutes,
+            travel_minutes=Decimal(payload.travel_minutes),
+            combat_minutes=Decimal(payload.combat_minutes),
             death_count=payload.death_count,
             notes=payload.notes,
         )
@@ -58,54 +61,71 @@ class DungeonService:
         self.db.flush()  # 取得 run.id
 
         # 1. 掉落估值
-        gross_value = 0.0
+        gross_value = Decimal(0)
+        gross_fiat = Decimal(0)
+        has_fiat = False
         for loot in payload.loots:
-            unit_price, source = self.valuation.get_unit_price(
-                loot.item_id, loot.policy, run.started_at
+            v: ValuationResult = self.valuation.value(
+                loot.item_id, Decimal(loot.quantity), loot.policy, run.started_at
             )
-            total = round(unit_price * loot.quantity, 4)
-            gross_value += total
+            gross_value += v.base_currency_value
+            if v.fiat_value is not None:
+                gross_fiat += v.fiat_value
+                has_fiat = True
             self.db.add(
                 DungeonLoot(
                     dungeon_run_id=run.id,
                     item_id=loot.item_id,
-                    quantity=loot.quantity,
-                    valuation_unit_price=unit_price,
-                    valuation_total=total,
-                    valuation_source=source,
+                    quantity=v.quantity,
+                    valuation_unit_price=v.unit_price,
+                    valuation_total=v.total,
+                    valuation_source=v.source,
+                    valuation_currency_item_id=v.currency_item_id,
+                    base_currency_value=v.base_currency_value,
+                    fiat_value=v.fiat_value,
                     valuation_time=run.started_at,
                 )
             )
 
         # 2. 消耗品估值
-        consumable_cost = 0.0
+        consumable_cost = Decimal(0)
+        consumable_fiat = Decimal(0)
         for cons in payload.consumptions:
-            unit_price, source = self.valuation.get_unit_price(
-                cons.item_id, cons.policy, run.started_at
+            v = self.valuation.value(
+                cons.item_id, Decimal(cons.quantity), cons.policy, run.started_at
             )
-            total = round(unit_price * cons.quantity, 4)
-            consumable_cost += total
+            consumable_cost += v.base_currency_value
+            if v.fiat_value is not None:
+                consumable_fiat += v.fiat_value
+                has_fiat = True
             self.db.add(
                 DungeonConsumption(
                     dungeon_run_id=run.id,
                     item_id=cons.item_id,
-                    quantity=cons.quantity,
-                    valuation_unit_price=unit_price,
-                    valuation_total=total,
-                    valuation_source=source,
+                    quantity=v.quantity,
+                    valuation_unit_price=v.unit_price,
+                    valuation_total=v.total,
+                    valuation_source=v.source,
+                    valuation_currency_item_id=v.currency_item_id,
+                    base_currency_value=v.base_currency_value,
+                    fiat_value=v.fiat_value,
                     valuation_time=run.started_at,
                 )
             )
 
-        # 3. 维修估值
-        repair_cost = 0.0
+        # 3. 维修估值（多物品，无 currency_cost）
+        repair_cost = Decimal(0)
+        repair_fiat = Decimal(0)
         for repair in payload.repairs:
-            repair_cost += self._apply_repair(run, repair)
+            rc, rf, rf_has = self._apply_repair(run, repair)
+            repair_cost += rc
+            repair_fiat += rf
+            has_fiat = has_fiat or rf_has
 
-        run.gross_value = round(gross_value, 4)
-        run.repair_cost = round(repair_cost, 4)
-        run.consumable_cost = round(consumable_cost, 4)
-        run.other_cost = round(payload.other_cost, 4)
+        run.gross_value = q_money(gross_value)
+        run.repair_cost = q_money(repair_cost)
+        run.consumable_cost = q_money(consumable_cost)
+        run.other_cost = q_money(Decimal(payload.other_cost))
         run.total_cost = calculate_total_cost(
             run.repair_cost, run.consumable_cost, run.other_cost
         )
@@ -118,6 +138,15 @@ class DungeonService:
         )
         run.ended_at = run.ended_at or now
 
+        # RMB 估值快照
+        if has_fiat:
+            total_fiat = gross_fiat - (consumable_fiat + repair_fiat)
+            run.gross_value_fiat = q_money(gross_fiat)
+            run.net_profit_fiat = q_money(total_fiat)
+            run.profit_per_hour_fiat = calculate_profit_per_hour(
+                total_fiat, run.total_duration_minutes
+            )
+
         self.db.flush()
 
         # 同步活动账本
@@ -125,54 +154,51 @@ class DungeonService:
 
         return run
 
-    def _apply_repair(self, run: DungeonRun, repair: RepairLineCreate) -> float:
-        """处理一条维修：支持按装备模板自动展开，或手动指定材料。返回本次维修总成本。"""
-        total_cost = repair.currency_cost
+    def _apply_repair(
+        self, run: DungeonRun, repair: RepairLineCreate
+    ) -> tuple[Decimal, Decimal, bool]:
+        """处理一条维修，返回 (base_currency_cost, fiat_cost, has_fiat)。
+
+        支持按装备模板自动展开，或手动指定 item + quantity。
+        维修消耗的任意 Item（材料/钻石/钻石块）都走统一估值。
+        """
+        items: list[tuple[int, Decimal]] = []
 
         if repair.equipment_id is not None:
             equipment = self.db.get(Equipment, repair.equipment_id)
             if equipment is None:
                 raise ValueError(f"装备 {repair.equipment_id} 不存在")
             for req in equipment.repair_requirements:
-                unit_price, source = self.valuation.get_unit_price(
-                    req.item_id, repair.policy or "auto", run.started_at
-                )
-                material_cost = round(unit_price * req.quantity, 4)
-                total_cost += material_cost
-                self.db.add(
-                    DungeonRepair(
-                        dungeon_run_id=run.id,
-                        equipment_id=equipment.id,
-                        item_id=req.item_id,
-                        quantity=req.quantity,
-                        currency_cost=req.currency_cost,
-                        material_cost=material_cost,
-                        valuation_source=source,
-                    )
-                )
-            # 装备模板自带的 currency_cost 也要计入
-            template_currency = sum(
-                r.currency_cost for r in equipment.repair_requirements
-            )
-            total_cost += template_currency
+                items.append((req.item_id, Decimal(req.quantity)))
         elif repair.item_id is not None:
-            unit_price, source = self.valuation.get_unit_price(
-                repair.item_id, repair.policy or "auto", run.started_at
+            items.append((repair.item_id, Decimal(repair.quantity or 0)))
+
+        total_cost = Decimal(0)
+        total_fiat = Decimal(0)
+        has_fiat = False
+        for item_id, quantity in items:
+            v = self.valuation.value(
+                item_id, quantity, repair.policy or "auto", run.started_at
             )
-            material_cost = round(unit_price * (repair.quantity or 0), 4)
-            total_cost += material_cost
+            total_cost += v.base_currency_value
+            if v.fiat_value is not None:
+                total_fiat += v.fiat_value
+                has_fiat = True
             self.db.add(
                 DungeonRepair(
                     dungeon_run_id=run.id,
-                    item_id=repair.item_id,
-                    quantity=repair.quantity or 0,
-                    currency_cost=repair.currency_cost,
-                    material_cost=material_cost,
-                    valuation_source=source,
+                    equipment_id=repair.equipment_id,
+                    item_id=item_id,
+                    quantity=quantity,
+                    valuation_unit_price=v.unit_price,
+                    material_cost=v.total,
+                    valuation_source=v.source,
+                    valuation_currency_item_id=v.currency_item_id,
+                    base_currency_value=v.base_currency_value,
+                    fiat_value=v.fiat_value,
                 )
             )
-
-        return round(total_cost, 4)
+        return q_money(total_cost), q_money(total_fiat), has_fiat
 
     def get_run(self, run_id: int) -> Optional[DungeonRun]:
         return self.db.get(DungeonRun, run_id)
