@@ -12,13 +12,16 @@ from app.schemas.dungeon import (
     RepairLineCreate,
 )
 from app.services.dungeon import DungeonService
+from app.analysis.service import compute_run_economy
 
 
-def _setup(db, make_item, currency_setup):
-    steel = make_item("精钢锭", vendor_buy_price=80, market_price=105)
+def _setup(db, make_item, currency_setup, set_price):
+    steel = make_item("精钢锭")
+    set_price(steel.id, 80)
     diamond = currency_setup["钻石"]
     crystal = currency_setup["钻石结晶"]
-    potion = make_item("生命药水", vendor_buy_price=40)
+    potion = make_item("生命药水")
+    set_price(potion.id, 40)
 
     dungeon = Dungeon(name="副本A")
     db.add(dungeon)
@@ -33,12 +36,12 @@ def _setup(db, make_item, currency_setup):
     return {"steel": steel, "diamond": diamond, "crystal": crystal, "potion": potion}, dungeon, sword
 
 
-def test_dungeon_run_full_calculation(db, make_item, currency_setup):
-    items, dungeon, sword = _setup(db, make_item, currency_setup)
+def test_dungeon_run_full_calculation(db, make_item, currency_setup, set_price):
+    items, dungeon, sword = _setup(db, make_item, currency_setup, set_price)
 
     payload = DungeonRunCreate(
         dungeon_id=dungeon.id,
-        started_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        started_at=datetime.now(timezone.utc),
         travel_minutes=12,
         combat_minutes=60,
         loots=[
@@ -51,26 +54,27 @@ def test_dungeon_run_full_calculation(db, make_item, currency_setup):
     )
 
     run = DungeonService(db).create_run(payload)
+    e = compute_run_economy(db, run)
 
     # 掉落: 2560 + 4 + 495 = 3059
-    assert run.gross_value == Decimal(3059)
+    assert e["gross_value"] == Decimal(3059)
     # 维修: 精钢锭3×80 + 钻石20×1 = 260
-    assert run.repair_cost == Decimal(260)
+    assert e["repair_cost"] == Decimal(260)
     # 消耗: 10×40 = 400
-    assert run.consumable_cost == Decimal(400)
+    assert e["consumable_cost"] == Decimal(400)
     # 总成本 = 660
-    assert run.total_cost == Decimal(660)
+    assert e["total_cost"] == Decimal(660)
     # 净利润 = 2399
-    assert run.net_profit == Decimal(2399)
+    assert e["net_profit"] == Decimal(2399)
     # 总时长 72 分钟
     assert run.total_duration_minutes == Decimal(72)
     # 每小时 = 2399 / 1.2
-    assert abs(run.profit_per_hour - Decimal(2399) / Decimal("1.2")) < Decimal("0.0001")
+    assert abs(e["profit_per_hour"] - Decimal(2399) / Decimal("1.2")) < Decimal("0.0001")
 
 
-def test_crystal_loot_converts_to_diamond(db, make_item, currency_setup):
+def test_crystal_loot_converts_to_diamond(db, make_item, currency_setup, set_price):
     """钻石结晶掉落自动换算为钻石。"""
-    items, dungeon, _ = _setup(db, make_item, currency_setup)
+    items, dungeon, _ = _setup(db, make_item, currency_setup, set_price)
     payload = DungeonRunCreate(
         dungeon_id=dungeon.id,
         started_at=datetime.now(timezone.utc),
@@ -78,4 +82,5 @@ def test_crystal_loot_converts_to_diamond(db, make_item, currency_setup):
     )
     run = DungeonService(db).create_run(payload)
     # 3 钻石结晶 = 297 钻石
-    assert run.gross_value == Decimal(297)
+    e = compute_run_economy(db, run)
+    assert e["gross_value"] == Decimal(297)

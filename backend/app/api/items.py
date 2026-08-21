@@ -1,8 +1,7 @@
-"""物品 API：CRUD / 图片上传 / 价格历史 / 关系 / 关系图。"""
+"""物品 API：CRUD / 图片上传 / 市场观察 / 关系 / 关系图。"""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -10,8 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.analysis.service import compute_item_importance
 from app.models.item import Item, ItemImage, ItemRelation, ItemRole
+from app.models.market import MarketObservation
 from app.repositories.item import ItemRepository
 from app.schemas.item import (
     ItemCreate,
@@ -20,9 +19,8 @@ from app.schemas.item import (
     ItemOut,
     ItemRelationOut,
     ItemUpdate,
-    PriceHistoryCreate,
-    PriceHistoryOut,
-    PriceStats,
+    MarketObservationCreate,
+    MarketObservationOut,
 )
 from app.services.image import ImageService
 from app.services.valuation import ValuationService
@@ -47,9 +45,6 @@ def _item_out(db: Session, item: Item) -> ItemOut:
         stack_size=item.stack_size,
         tags=item.tags or [],
         roles=roles,
-        vendor_buy_price=item.vendor_buy_price,
-        market_price=item.market_price,
-        manual_price=item.manual_price,
         importance_score=item.importance_score,
         is_active=item.is_active,
         created_at=item.created_at,
@@ -117,18 +112,20 @@ def get_item(item_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "物品不存在")
     base = _item_out(db, item).model_dump()
     base["images"] = [ItemImageOut.model_validate(img).model_dump() for img in item.images]
-    base["price_history"] = [
-        PriceHistoryOut.model_validate(p).model_dump() for p in item.price_history
+    base["market_observations"] = [
+        MarketObservationOut.model_validate(o).model_dump()
+        for o in sorted(item.market_observations, key=lambda x: x.observed_at, reverse=True)
     ]
     base["relations"] = [
         ItemRelationOut.model_validate(r).model_dump() for r in item.relations_out
     ]
-    # 当前价值（钻石 + RMB 估值）
+    vs = ValuationService(db)
     try:
-        v = ValuationService(db).value(item.id, 1, "auto")
-        base["current_value"] = v.as_dict()
+        base["current_value"] = vs.value(item.id, 1, "auto").as_dict()
     except Exception:
         base["current_value"] = None
+    base["market_summary"] = vs.market_summary(item.id)
+    base["price_history"] = vs.price_history(item.id)
     return base
 
 
@@ -212,42 +209,43 @@ def set_primary(item_id: int, image_id: int, db: Session = Depends(get_db)):
     return ItemImageOut.model_validate(image)
 
 
-# ---- 价格 ----
+# ---- 市场观察 ----
 
-@router.get("/{item_id}/prices", response_model=dict)
-def get_prices(item_id: int, db: Session = Depends(get_db)):
+@router.get("/{item_id}/market", response_model=list)
+def list_market(item_id: int, db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(MarketObservation)
+        .where(MarketObservation.item_id == item_id)
+        .order_by(MarketObservation.observed_at.desc())
+    ).scalars().all()
+    return [MarketObservationOut.model_validate(o).model_dump() for o in rows]
+
+
+@router.post("/{item_id}/market", response_model=MarketObservationOut, status_code=201)
+def record_market(item_id: int, payload: MarketObservationCreate, db: Session = Depends(get_db)):
     item = db.get(Item, item_id)
     if item is None:
         raise HTTPException(404, "物品不存在")
-    vs = ValuationService(db)
-    return {
-        "current": {
-            "vendor": item.vendor_buy_price,
-            "market": item.market_price,
-            "manual": item.manual_price,
-        },
-        "stats": {
-            t: vs.price_stats(item_id, t) for t in ("vendor", "market", "manual")
-        },
-    }
-
-
-@router.post("/{item_id}/prices", response_model=PriceHistoryOut, status_code=201)
-def record_price(item_id: int, payload: PriceHistoryCreate, db: Session = Depends(get_db)):
-    item = db.get(Item, item_id)
-    if item is None:
-        raise HTTPException(404, "物品不存在")
-    entry = ValuationService(db).record_price(
+    obs = ValuationService(db).record_observation(
         item_id,
-        payload.price_type,
-        payload.price,
-        payload.source,
-        payload.quantity,
-        payload.observed_at or datetime.now(timezone.utc),
+        observation_type=payload.observation_type,
+        price_quantity=payload.price_quantity,
+        quantity=payload.quantity,
+        price_item_id=payload.price_item_id,
+        seller_name=payload.seller_name,
+        location=payload.location,
+        source=payload.source,
+        observed_at=payload.observed_at,
+        note=payload.note,
     )
     db.commit()
-    db.refresh(entry)
-    return PriceHistoryOut.model_validate(entry)
+    db.refresh(obs)
+    return MarketObservationOut.model_validate(obs)
+
+
+@router.get("/{item_id}/market/summary", response_model=dict)
+def market_summary(item_id: int, db: Session = Depends(get_db)):
+    return ValuationService(db).market_summary(item_id)
 
 
 # ---- 关系 ----
@@ -275,7 +273,6 @@ def relation_graph(item_id: int, depth: int = Query(1, ge=1, le=3), db: Session 
     ).scalars().all()
     for r in relations:
         src_id = f"{r.source_type}:{r.source_id}"
-        # 解析来源名称
         src_label = _resolve_source_label(db, r.source_type, r.source_id)
         nodes[src_id] = {"id": src_id, "label": src_label, "type": r.source_type}
         edges.append(
@@ -287,11 +284,6 @@ def relation_graph(item_id: int, depth: int = Query(1, ge=1, le=3), db: Session 
                 "quantity": r.quantity,
             }
         )
-
-    # 反向关系（该物品作为材料被其他配方/装备引用）也纳入
-    reverse = db.execute(
-        select(ItemRelation).where(ItemRelation.source_id == item_id, ItemRelation.source_type == "item")
-    ).scalars().all()
 
     return {"nodes": list(nodes.values()), "edges": edges}
 

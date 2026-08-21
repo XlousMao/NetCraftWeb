@@ -38,10 +38,10 @@ class ItemRepository(BaseRepository[Item]):
             for tag in tags:
                 stmt = stmt.where(Item.tags.contains([tag]))
 
-        # 排序
+        # 排序（价值排序改用重要性评分，因价格已移至市场观察表）
         sort_map = {
             "name": Item.name,
-            "value": func.coalesce(Item.manual_price, Item.market_price, Item.vendor_buy_price),
+            "value": Item.importance_score,
             "importance": Item.importance_score,
             "created": Item.created_at,
         }

@@ -18,10 +18,10 @@ from app.models.equipment import Equipment, EquipmentRepairRequirement
 from app.models.item import (
     Item,
     ItemImage,
-    ItemPriceHistory,
     ItemRelation,
     ItemRole,
 )
+from app.models.market import MarketObservation
 from app.models.recipe import (
     ProductionRecord,
     Recipe,
@@ -32,9 +32,9 @@ from app.models.recipe import (
 __all__ = [
     "Item",
     "ItemImage",
-    "ItemPriceHistory",
     "ItemRelation",
     "ItemRole",
+    "MarketObservation",
     "CurrencySystem",
     "CurrencyDenomination",
     "CurrencyConversionRule",

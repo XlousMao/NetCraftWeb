@@ -43,15 +43,17 @@ NetCraftWeb 围绕一个核心理念构建：
 | **Item Master** | 物品 CRUD、分类、标签、**多角色（Item Role）**、三种估值来源（商人/市场/手动） |
 | **货币体系** | Currency System / Denomination / Conversion Rule，图遍历动态换算 |
 | **RMB 估值** | 法币观察（Fiat Observation）历史汇率，钻石 ↔ RMB 双向换算 |
+| **市场观察** | MarketObservation 价格体系（出售/收购/NPC/手动），支持以物易物，价格是市场事件而非 Item 属性 |
 | **物品图片** | 拖拽上传、Ctrl+V 粘贴截图、SHA-256 去重、主图管理 |
-| **价格历史** | 历史价格、趋势、**按时间点生效**（observed_at 参与历史查询） |
+| **价格历史** | 历史价格曲线、价格区间、最高收购/最低出售、**按时间点生效** |
 | **关系系统** | Dungeon DROPS / Recipe CONSUMES+PRODUCES / Equipment REQUIRES_REPAIR |
 | **关系图** | 可视化图谱、节点点击跳转、货币兑换边 |
 | **重要性评分** | 可解释加权公式（副本产出/装备消耗/配方引用/是否货币/价值/流通量） |
-| **副本系统** | 副本、副本记录、掉落、消耗、**多物品维修**（材料+钻石+钻石块） |
-| **收益计算** | 掉落价值、维修成本、净利润、**钻石/小时 + RMB/小时** |
+| **副本系统** | 副本、副本记录、掉落、消耗、**多物品维修**（只记录事实，利润动态计算） |
+| **收益计算** | 掉落价值、维修成本、净利润、**钻石/小时 + RMB/小时**（按时间动态估值） |
 | **周期分析** | 日/周/月/自定义，净利润、成本占比、**维修占比**、钻石+RMB 双口径 |
-| **炼金/生产** | 配方、理论/实际成功率、实际单位成本、失败损耗、ROI、机会成本 |
+| **炼金/生产** | 配方（ALCHEMY/CRAFT/SYNTHESIS）、理论/实际成功率、实际单位成本、ROI |
+| **决策分析** | 买 vs 做、卖材料 vs 合成、刷副本 vs 直接购买，输出成本差异/利润/推荐方案 |
 | **活动系统** | 统一账本、活动效率排行 |
 | **Dashboard** | 今日/本周/本月经济、钻石价值 + RMB 估值 |
 | **AI 分析** | DeepSeek 接入，结构化数据 → 摘要/问题定位/优化建议（无 key 自动降级） |
@@ -62,7 +64,7 @@ NetCraftWeb 围绕一个核心理念构建：
 
 - **货币面额**：钻石（基础=1）、钻石块（=9）、钻石结晶（=99），由 `currency_conversion_rules` 图遍历推导，新增面额无需改代码。
 - **RMB 观察**：`fiat_exchange_observations` 记录「quantity 个货币物品 = fiat_amount RMB」的历史观察，按 `observed_at` 取最近有效汇率。
-- **估值链**：`物品数量 → 物品价格 → 基础货币（钻石）→ RMB`，所有历史业务事件保存估值快照，当前价格变化不影响历史数据。
+- **估值链**：`物品数量 → 市场观察价格 → 基础货币（钻石）→ RMB`。价格记录在 `market_observations`，副本利润按 `started_at` 动态查询历史价计算，价格变化不影响历史副本的还原。
 
 ---
 
@@ -298,6 +300,22 @@ docker compose up -d --build    # 重新迁移 + 生成 V2 奶块数据
 ```
 
 Alembic 迁移（`cf3b346a64fe` 之后的 V2 迁移）会自动执行：新建货币/角色/法币表、经济字段 Float→Numeric、为掉落/维修补充钻石+RMB 快照列。迁移本身对旧数据安全（NOT NULL 新列带默认值），但因语义变化，强烈建议重建数据。
+
+---
+
+## V2 → V3 升级说明
+
+V3 将价格从 Item 属性重构为 **MarketObservation 市场观察**，并删除副本估值快照（利润动态计算）。
+
+- **数据迁移**：`items.vendor_buy_price/market_price/manual_price` 与 `item_price_history` 会**自动迁移**到 `market_observations`（vendor→NPC_PRICE、market→SELL_OFFER、manual→MANUAL_ESTIMATE），不丢数据。
+- **副本**：`dungeon_runs` 的利润快照字段与掉落/维修的估值快照列被删除，利润改为按 `started_at` 动态查询历史价计算。
+- **配方**：新增 `recipe_type`（ALCHEMY/CRAFT/SYNTHESIS）。
+
+**升级方式**：直接执行迁移即可（`docker compose up -d --build`），价格数据自动迁移，无需重建。
+
+```bash
+docker compose up -d --build    # 自动执行 V3 迁移 + 价格数据迁移
+```
 
 ---
 

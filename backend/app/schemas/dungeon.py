@@ -1,4 +1,7 @@
-"""副本相关 Schema。"""
+"""副本相关 Schema。
+
+V3：掉落/消耗/维修只记录事实（item_id + quantity），利润字段由后端动态计算返回。
+"""
 
 from datetime import datetime
 from typing import List, Optional
@@ -35,25 +38,19 @@ class DungeonOut(DungeonBase):
 class LootCreate(BaseModel):
     item_id: int
     quantity: float = Field(..., gt=0)
-    policy: str = "auto"
 
 
 class ConsumptionCreate(BaseModel):
     item_id: int
     quantity: float = Field(..., gt=0)
-    policy: str = "auto"
 
 
 class RepairLineCreate(BaseModel):
-    """一次维修记录：按装备模板自动展开，或手动指定 item + quantity。
-
-    V2：维修由任意 Item 组成（材料 + 钻石 + 钻石块…），不再有 currency_cost。
-    """
+    """一次维修记录：按装备模板自动展开，或手动指定 item + quantity。"""
 
     equipment_id: Optional[int] = None
     item_id: Optional[int] = None
     quantity: Optional[float] = None
-    policy: str = "auto"
 
 
 class DungeonRunCreate(BaseModel):
@@ -64,7 +61,6 @@ class DungeonRunCreate(BaseModel):
     combat_minutes: float = 0.0
     death_count: int = 0
     notes: Optional[str] = None
-    other_cost: float = 0.0
     loots: List[LootCreate] = Field(default_factory=list)
     consumptions: List[ConsumptionCreate] = Field(default_factory=list)
     repairs: List[RepairLineCreate] = Field(default_factory=list)
@@ -79,13 +75,6 @@ class LootOut(BaseModel):
     item_name: Optional[str] = None
     icon_url: Optional[str] = None
     quantity: float
-    valuation_unit_price: float
-    valuation_total: float
-    valuation_source: str
-    valuation_currency_item_id: Optional[int] = None
-    base_currency_value: float
-    fiat_value: Optional[float] = None
-    valuation_time: datetime
 
 
 class ConsumptionOut(BaseModel):
@@ -97,13 +86,6 @@ class ConsumptionOut(BaseModel):
     item_name: Optional[str] = None
     icon_url: Optional[str] = None
     quantity: float
-    valuation_unit_price: float
-    valuation_total: float
-    valuation_source: str
-    valuation_currency_item_id: Optional[int] = None
-    base_currency_value: float
-    fiat_value: Optional[float] = None
-    valuation_time: datetime
 
 
 class RepairOut(BaseModel):
@@ -115,7 +97,6 @@ class RepairOut(BaseModel):
     item_id: int
     item_name: Optional[str] = None
     quantity: float
-    base_currency_value: float
 
 
 class DungeonRunOut(BaseModel):
@@ -131,13 +112,13 @@ class DungeonRunOut(BaseModel):
     death_count: int
     notes: Optional[str] = None
     total_duration_minutes: float
-    gross_value: float
-    repair_cost: float
-    consumable_cost: float
-    other_cost: float
-    total_cost: float
-    net_profit: float
-    profit_per_hour: float
+    # 以下为动态计算（非落库字段）
+    gross_value: float = 0.0
+    repair_cost: float = 0.0
+    consumable_cost: float = 0.0
+    total_cost: float = 0.0
+    net_profit: float = 0.0
+    profit_per_hour: float = 0.0
     gross_value_fiat: Optional[float] = None
     net_profit_fiat: Optional[float] = None
     profit_per_hour_fiat: Optional[float] = None

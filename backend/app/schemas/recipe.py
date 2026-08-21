@@ -18,6 +18,7 @@ class RecipeOutputIn(BaseModel):
 
 class RecipeCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
+    recipe_type: str = "ALCHEMY"  # ALCHEMY/CRAFT/SYNTHESIS
     category: Optional[str] = None
     description: Optional[str] = None
     expected_success_rate: float = Field(1.0, ge=0, le=1)
@@ -49,6 +50,7 @@ class RecipeOutputOut(BaseModel):
 
 class RecipeUpdate(BaseModel):
     name: Optional[str] = None
+    recipe_type: Optional[str] = None  # ALCHEMY/CRAFT/SYNTHESIS
     category: Optional[str] = None
     description: Optional[str] = None
     expected_success_rate: Optional[float] = Field(None, ge=0, le=1)
@@ -62,6 +64,7 @@ class RecipeOut(BaseModel):
 
     id: int
     name: str
+    recipe_type: str = "ALCHEMY"
     category: Optional[str] = None
     description: Optional[str] = None
     expected_success_rate: float

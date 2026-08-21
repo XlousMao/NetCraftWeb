@@ -13,12 +13,16 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from app.models.base import TimestampMixin
 
+# 配方类型（V3）
+RECIPE_TYPES = ("ALCHEMY", "CRAFT", "SYNTHESIS")
+
 
 class Recipe(Base, TimestampMixin):
     __tablename__ = "recipes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    recipe_type: Mapped[str] = mapped_column(String(32), default="ALCHEMY", index=True)
     category: Mapped[Optional[str]] = mapped_column(String(64))
     description: Mapped[Optional[str]] = mapped_column(Text)
     expected_success_rate: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=1)  # 0~1

@@ -21,9 +21,6 @@ const editingId = ref<number | null>(null)
 const form = ref({
   name: '',
   category: '材料',
-  vendor_buy_price: null as number | null,
-  market_price: null as number | null,
-  manual_price: null as number | null,
   roles: [] as string[],
   description: '',
 })
@@ -73,7 +70,7 @@ function handleFileChange(e: Event) {
 
 function resetForm() {
   editingId.value = null
-  form.value = { name: '', category: '材料', vendor_buy_price: null, market_price: null, manual_price: null, roles: [], description: '' }
+  form.value = { name: '', category: '材料', roles: [], description: '' }
   selectedFile.value = null
 }
 
@@ -87,9 +84,6 @@ function openEdit(item: Item) {
   form.value = {
     name: item.name,
     category: item.category || '材料',
-    vendor_buy_price: item.vendor_buy_price ?? null,
-    market_price: item.market_price ?? null,
-    manual_price: item.manual_price ?? null,
     roles: item.roles || [],
     description: item.description || '',
   }
@@ -199,15 +193,6 @@ onMounted(() => {
           <el-select v-model="form.roles" multiple collapse-tags style="width: 100%" placeholder="可多选">
             <el-option v-for="r in roleOptions" :key="r.value" :label="r.label" :value="r.value" />
           </el-select>
-        </el-form-item>
-        <el-form-item label="商人收购价">
-          <el-input-number v-model="form.vendor_buy_price" :min="0" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="市场价格">
-          <el-input-number v-model="form.market_price" :min="0" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="手动估值">
-          <el-input-number v-model="form.manual_price" :min="0" style="width: 100%" />
         </el-form-item>
         <el-form-item v-if="!editingId" label="图片(可选)">
           <input type="file" accept="image/*" @change="handleFileChange" style="width: 100%" />

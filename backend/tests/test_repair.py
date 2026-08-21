@@ -11,10 +11,12 @@ from app.models.dungeon import Dungeon
 from app.models.equipment import Equipment, EquipmentRepairRequirement
 from app.schemas.dungeon import DungeonRunCreate, RepairLineCreate
 from app.services.dungeon import DungeonService
+from app.analysis.service import compute_run_economy
 
 
-def _setup(db, make_item, currency_setup):
-    steel = make_item("精钢锭", vendor_buy_price=80)
+def _setup(db, make_item, currency_setup, set_price):
+    steel = make_item("精钢锭")
+    set_price(steel.id, 80)
     diamond = currency_setup["钻石"]
     block = currency_setup["钻石块"]
 
@@ -29,8 +31,8 @@ def _setup(db, make_item, currency_setup):
     return steel, diamond, block, sword
 
 
-def test_repair_multi_item_cost(db, make_item, currency_setup):
-    steel, diamond, block, sword = _setup(db, make_item, currency_setup)
+def test_repair_multi_item_cost(db, make_item, currency_setup, set_price):
+    steel, diamond, block, sword = _setup(db, make_item, currency_setup, set_price)
     dungeon = Dungeon(name="副本A")
     db.add(dungeon)
     db.flush()
@@ -53,20 +55,21 @@ def test_repair_multi_item_cost(db, make_item, currency_setup):
         repairs=[RepairLineCreate(equipment_id=sword.id)],
     )
     run = DungeonService(db).create_run(payload)
+    e = compute_run_economy(db, run)
 
     # 维修成本（钻石）：精钢锭 3×80 + 钻石 20×1 + 钻石块 2×9 = 240 + 20 + 18 = 278
-    assert run.repair_cost == Decimal(278)
+    assert e["repair_cost"] == Decimal(278)
     # 维修明细 3 条
     assert len(run.repairs) == 3
     # 无掉落，净利润为负；RMB 估值 = -278 钻石对应的 RMB
-    assert run.net_profit_fiat is not None and run.net_profit_fiat < 0
+    assert e["net_profit_fiat"] is not None and e["net_profit_fiat"] < 0
     expected_rmb = Decimal(278) * Decimal("27.10") / Decimal(99) / Decimal(9)
-    assert abs(abs(run.net_profit_fiat) - expected_rmb) < Decimal("0.01")
+    assert abs(abs(e["net_profit_fiat"]) - expected_rmb) < Decimal("0.01")
 
 
-def test_repair_manual_item_line(db, make_item, currency_setup):
+def test_repair_manual_item_line(db, make_item, currency_setup, set_price):
     """手动指定 item + quantity 的维修。"""
-    steel, diamond, block, sword = _setup(db, make_item, currency_setup)
+    steel, diamond, block, sword = _setup(db, make_item, currency_setup, set_price)
     dungeon = Dungeon(name="副本B")
     db.add(dungeon)
     db.flush()
@@ -78,4 +81,5 @@ def test_repair_manual_item_line(db, make_item, currency_setup):
     )
     run = DungeonService(db).create_run(payload)
     # 2 钻石块 = 18 钻石
-    assert run.repair_cost == Decimal(18)
+    e = compute_run_economy(db, run)
+    assert e["repair_cost"] == Decimal(18)

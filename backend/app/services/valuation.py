@@ -1,8 +1,9 @@
 """估值引擎 —— 统一为任意物品在任意时点给出单价与来源，并换算钻石/RMB 双价值。
 
-V2 关键：
-  - observed_at 真实参与历史价格查询（取 observed_at <= target 的最近有效价格）。
-  - 输出 Value 对象：unit_price + currency + base_currency_value(钻石) + fiat_value(RMB)。
+V3 关键：
+  - 价格数据源改为 market_observations（市场事件），不再依赖 Item 属性字段。
+  - observed_at 真实参与历史查询（取 observed_at <= target 的最近有效观察）。
+  - 输出 Value 对象：unit_price + base_currency_value(钻石) + fiat_value(RMB)。
 """
 
 from __future__ import annotations
@@ -14,19 +15,20 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.item import Item, ItemPriceHistory
+from app.models.item import Item
+from app.models.market import OBSERVATION_TYPES, MarketObservation
 from app.services.currency import CurrencyService, q_money
 from app.services.fiat import FiatService
 
-# 估值来源优先级（auto 策略下取第一个非空）
-# manual（手动估值）最高；vendor（商人收购价）作为稳定保守的"实际可变现价值"
-# 默认优先于 market（玩家市场价，可能波动/被操纵），与规格示例一致。
-AUTO_POLICY_ORDER = ("manual", "vendor", "market")
+# auto 估值优先级（第一个有值即用）：
+# 手动估值最可信；商人定价(NPC)稳定；出售挂单(SELL_OFFER)作为市场价参考
+AUTO_ORDER = ("MANUAL_ESTIMATE", "NPC_PRICE", "SELL_OFFER")
 
-POLICY_FIELD_MAP = {
-    "vendor": "vendor_buy_price",
-    "market": "market_price",
-    "manual": "manual_price",
+# 旧 policy 别名（兼容历史调用）
+POLICY_ALIAS = {
+    "vendor": "NPC_PRICE",
+    "market": "SELL_OFFER",
+    "manual": "MANUAL_ESTIMATE",
 }
 
 
@@ -80,48 +82,47 @@ class ValuationService:
     def _base_currency_id(self) -> Optional[int]:
         return self.currency.get_base_currency_item_id()
 
-    def _history_price_at(
-        self, item_id: int, price_type: str, observed_at: datetime
-    ) -> Optional[ItemPriceHistory]:
+    def _resolve_policy(self, policy: str) -> str:
+        return POLICY_ALIAS.get(policy, policy)
+
+    def _observation_at(
+        self, item_id: int, obs_type: str, observed_at: datetime
+    ) -> Optional[MarketObservation]:
         return self.db.execute(
-            select(ItemPriceHistory)
+            select(MarketObservation)
             .where(
-                ItemPriceHistory.item_id == item_id,
-                ItemPriceHistory.price_type == price_type,
-                ItemPriceHistory.observed_at <= observed_at,
+                MarketObservation.item_id == item_id,
+                MarketObservation.observation_type == obs_type,
+                MarketObservation.observed_at <= observed_at,
             )
-            .order_by(ItemPriceHistory.observed_at.desc())
+            .order_by(MarketObservation.observed_at.desc())
             .limit(1)
         ).scalar_one_or_none()
+
+    def _unit_price_to_base(self, obs: MarketObservation) -> Decimal:
+        """观察的单价以 price_item 计价，换算为基础货币（钻石）。"""
+        unit = obs.unit_price
+        base = self._base_currency_id()
+        if obs.price_item_id is None or obs.price_item_id == base:
+            return q_money(unit)
+        factor = self.currency.to_base_factor(obs.price_item_id)
+        return q_money(unit * factor) if factor is not None else q_money(unit)
 
     def get_unit_price(
         self,
         item_id: int,
         policy: str = "auto",
         observed_at: Optional[datetime] = None,
-    ) -> tuple[Decimal, Optional[int], str]:
-        """返回 (unit_price, currency_item_id, source)。
-
-        显式策略：查历史价格（observed_at <= target），无则回退 Item 当前字段。
-        auto：按 manual → vendor → market 顺序取第一个有值的来源。
-        """
-        item = self.db.get(Item, item_id)
-        if item is None:
-            return Decimal(0), None, "unknown"
+    ) -> tuple[Decimal, str]:
+        """返回 (unit_price_in_diamond, source)。"""
         observed_at = observed_at or datetime.now(timezone.utc)
-        base = self._base_currency_id()
-
-        policies = [policy] if policy in POLICY_FIELD_MAP else list(AUTO_POLICY_ORDER)
+        resolved = self._resolve_policy(policy)
+        policies = [resolved] if resolved in OBSERVATION_TYPES else list(AUTO_ORDER)
         for p in policies:
-            hist = self._history_price_at(item_id, p, observed_at)
-            if hist is not None and hist.price is not None:
-                currency_id = hist.currency_item_id or base
-                return Decimal(hist.price), currency_id, f"{p}:history"
-            current = getattr(item, POLICY_FIELD_MAP[p], None)
-            if current is not None and Decimal(current) > 0:
-                return Decimal(current), base, p
-
-        return Decimal(0), base, "none"
+            obs = self._observation_at(item_id, p, observed_at)
+            if obs is not None:
+                return self._unit_price_to_base(obs), f"{p}:observation"
+        return Decimal(0), "none"
 
     def value(
         self,
@@ -133,7 +134,7 @@ class ValuationService:
         """估算某物品某数量的价值，返回钻石 + RMB 双价值。
 
         货币面额物品（钻石块/钻石结晶等）直接按换算系数估值，
-        普通物品按价格估值。
+        普通物品按市场观察估值。
         """
         observed_at = observed_at or datetime.now(timezone.utc)
         quantity = Decimal(quantity)
@@ -156,98 +157,115 @@ class ValuationService:
                 observed_at=observed_at,
             )
 
-        unit_price, currency_item_id, source = self.get_unit_price(
-            item_id, policy, observed_at
-        )
+        unit_price, source = self.get_unit_price(item_id, policy, observed_at)
         total = q_money(unit_price * quantity)
-
-        if currency_item_id is None or currency_item_id == base_id:
-            base_value = total
-        else:
-            f = self.currency.to_base_factor(currency_item_id)
-            base_value = q_money(total * f) if f is not None else total
-
-        fiat = self.fiat.value(base_value, observed_at)
+        fiat = self.fiat.value(total, observed_at)
 
         return ValuationResult(
             item_id=item_id,
             quantity=quantity,
             unit_price=unit_price,
             total=total,
-            currency_item_id=currency_item_id or base_id,
-            base_currency_value=base_value,
+            currency_item_id=base_id,
+            base_currency_value=total,
             fiat_value=fiat,
             source=source,
             observed_at=observed_at,
         )
 
-    def record_price(
+    # ---- 市场观察记录 ----
+
+    def record_observation(
         self,
         item_id: int,
-        price_type: str,
-        price: Decimal,
+        observation_type: str,
+        price_quantity: Decimal,
+        quantity: Decimal = Decimal(1),
+        price_item_id: Optional[int] = None,
+        seller_name: Optional[str] = None,
+        location: Optional[str] = None,
         source: Optional[str] = None,
-        quantity: Optional[Decimal] = None,
         observed_at: Optional[datetime] = None,
-        currency_item_id: Optional[int] = None,
-        notes: Optional[str] = None,
-    ) -> ItemPriceHistory:
-        """记录一条价格历史，并同步更新 item 当前价格字段。"""
+        note: Optional[str] = None,
+    ) -> MarketObservation:
+        """记录一条市场观察。price_item_id 为空表示基础货币（钻石）。"""
         item = self.db.get(Item, item_id)
         if item is None:
             raise ValueError(f"Item {item_id} 不存在")
 
         observed_at = observed_at or datetime.now(timezone.utc)
-        entry = ItemPriceHistory(
+        obs = MarketObservation(
             item_id=item_id,
-            price_type=price_type,
-            price=Decimal(price),
-            currency_item_id=currency_item_id,
-            quantity=Decimal(quantity) if quantity is not None else None,
+            observation_type=observation_type,
+            quantity=Decimal(quantity),
+            price_item_id=price_item_id or self._base_currency_id(),
+            price_quantity=Decimal(price_quantity),
+            seller_name=seller_name,
+            location=location,
             source=source,
             observed_at=observed_at,
-            notes=notes,
+            note=note,
         )
-        self.db.add(entry)
+        self.db.add(obs)
         self.db.flush()
+        return obs
 
-        # 同步当前价格字段为「该类型最新观察价格」（历史记录不覆盖当前价）
-        if price_type in POLICY_FIELD_MAP:
-            latest = self.db.execute(
-                select(ItemPriceHistory)
-                .where(
-                    ItemPriceHistory.item_id == item_id,
-                    ItemPriceHistory.price_type == price_type,
-                )
-                .order_by(ItemPriceHistory.observed_at.desc())
-                .limit(1)
-            ).scalar_one_or_none()
-            if latest is not None:
-                setattr(item, POLICY_FIELD_MAP[price_type], Decimal(latest.price))
-
-        return entry
-
-    def price_stats(self, item_id: int, price_type: str) -> dict:
-        """某物品某类价格的历史统计。"""
+    def market_summary(self, item_id: int) -> dict:
+        """某物品市场概览：价格区间、最高收购、最低出售、最近观察。"""
         rows = (
             self.db.execute(
-                select(ItemPriceHistory).where(
-                    ItemPriceHistory.item_id == item_id,
-                    ItemPriceHistory.price_type == price_type,
-                )
+                select(MarketObservation)
+                .where(MarketObservation.item_id == item_id)
+                .order_by(MarketObservation.observed_at.desc())
             )
             .scalars()
             .all()
         )
-        prices = [Decimal(r.price) for r in rows]
-        if not prices:
-            return {"price_type": price_type, "latest": None, "avg": None,
-                    "min": None, "max": None, "count": 0}
+        base_id = self._base_currency_id()
+        def to_diamond(obs):
+            unit = obs.unit_price
+            if obs.price_item_id is None or obs.price_item_id == base_id:
+                return float(unit)
+            f = self.currency.to_base_factor(obs.price_item_id)
+            return float(unit * f) if f is not None else float(unit)
+
+        units = [to_diamond(o) for o in rows]
+        buys = [to_diamond(o) for o in rows if o.observation_type == "BUY_ORDER"]
+        sells = [to_diamond(o) for o in rows if o.observation_type == "SELL_OFFER"]
+
         return {
-            "price_type": price_type,
-            "latest": float(prices[-1]),
-            "avg": float(sum(prices) / len(prices)),
-            "min": float(min(prices)),
-            "max": float(max(prices)),
-            "count": len(prices),
+            "count": len(rows),
+            "latest": units[0] if units else None,
+            "min": min(units) if units else None,
+            "max": max(units) if units else None,
+            "highest_buy_order": max(buys) if buys else None,
+            "lowest_sell_offer": min(sells) if sells else None,
         }
+
+    def price_history(self, item_id: int, observation_type: Optional[str] = None) -> list[dict]:
+        """某物品价格历史（供图表）。"""
+        stmt = (
+            select(MarketObservation)
+            .where(MarketObservation.item_id == item_id)
+            .order_by(MarketObservation.observed_at.asc())
+        )
+        if observation_type:
+            stmt = stmt.where(MarketObservation.observation_type == observation_type)
+        rows = self.db.execute(stmt).scalars().all()
+        base_id = self._base_currency_id()
+        result = []
+        for o in rows:
+            unit = o.unit_price
+            if o.price_item_id is not None and o.price_item_id != base_id:
+                f = self.currency.to_base_factor(o.price_item_id)
+                unit = unit * f if f is not None else unit
+            result.append(
+                {
+                    "observation_type": o.observation_type,
+                    "unit_price": float(unit),
+                    "quantity": float(o.quantity),
+                    "observed_at": o.observed_at.isoformat(),
+                    "source": o.source,
+                }
+            )
+        return result

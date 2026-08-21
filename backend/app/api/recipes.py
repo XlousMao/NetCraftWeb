@@ -64,6 +64,7 @@ def create_recipe(payload: RecipeCreate, db: Session = Depends(get_db)):
         raise HTTPException(409, "配方名称已存在")
     r = Recipe(
         name=payload.name,
+        recipe_type=payload.recipe_type,
         category=payload.category,
         description=payload.description,
         expected_success_rate=payload.expected_success_rate,

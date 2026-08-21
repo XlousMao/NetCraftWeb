@@ -1,6 +1,7 @@
 """物品相关 Schema。"""
 
 from datetime import datetime
+from decimal import Decimal
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -18,9 +19,6 @@ class ItemBase(BaseModel):
     stack_size: Optional[int] = None
     tags: List[str] = Field(default_factory=list)
     roles: List[str] = Field(default_factory=list)
-    vendor_buy_price: Optional[float] = None
-    market_price: Optional[float] = None
-    manual_price: Optional[float] = None
     is_active: bool = True
 
 
@@ -40,9 +38,6 @@ class ItemUpdate(BaseModel):
     stack_size: Optional[int] = None
     tags: Optional[List[str]] = None
     roles: Optional[List[str]] = None
-    vendor_buy_price: Optional[float] = None
-    market_price: Optional[float] = None
-    manual_price: Optional[float] = None
     is_active: Optional[bool] = None
 
 
@@ -71,38 +66,35 @@ class ItemImageOut(BaseModel):
     created_at: datetime
 
 
-class PriceHistoryCreate(BaseModel):
-    price_type: str = "vendor"  # vendor | market | manual
-    price: float = Field(..., gt=0)
-    currency_item_id: Optional[int] = None
-    quantity: Optional[float] = None
+# ---- 市场观察 ----
+
+class MarketObservationCreate(BaseModel):
+    observation_type: str = "SELL_OFFER"  # SELL_OFFER/BUY_ORDER/NPC_PRICE/MANUAL_ESTIMATE
+    quantity: float = Field(1, gt=0)
+    price_item_id: Optional[int] = None  # 为空表示基础货币（钻石）
+    price_quantity: float = Field(..., gt=0)
+    seller_name: Optional[str] = None
+    location: Optional[str] = None
     source: Optional[str] = None
     observed_at: Optional[datetime] = None
-    notes: Optional[str] = None
+    note: Optional[str] = None
 
 
-class PriceHistoryOut(BaseModel):
+class MarketObservationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     item_id: int
-    price_type: str
-    price: float
-    currency_item_id: Optional[int] = None
-    quantity: Optional[float] = None
+    observation_type: str
+    quantity: float
+    price_item_id: Optional[int] = None
+    price_quantity: float
+    seller_name: Optional[str] = None
+    location: Optional[str] = None
     source: Optional[str] = None
     observed_at: datetime
-    notes: Optional[str] = None
+    note: Optional[str] = None
     created_at: datetime
-
-
-class PriceStats(BaseModel):
-    price_type: str
-    latest: Optional[float] = None
-    avg: Optional[float] = None
-    min: Optional[float] = None
-    max: Optional[float] = None
-    count: int = 0
 
 
 class ItemRelationOut(BaseModel):
@@ -120,6 +112,8 @@ class ItemRelationOut(BaseModel):
 
 class ItemDetailOut(ItemOut):
     images: List[ItemImageOut] = Field(default_factory=list)
-    price_history: List[PriceHistoryOut] = Field(default_factory=list)
+    market_observations: List[MarketObservationOut] = Field(default_factory=list)
     relations: List[ItemRelationOut] = Field(default_factory=list)
     current_value: Optional[dict] = None
+    market_summary: Optional[dict] = None
+    price_history: Optional[list] = None

@@ -9,11 +9,12 @@ const items = ref<any[]>([])
 const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)
 const showInactive = ref(false)
-const form = ref<any>({ name: '', category: '炼金', expected_success_rate: 0.9, materials: [], outputs: [] })
+const form = ref<any>({ name: '', recipe_type: 'ALCHEMY', expected_success_rate: 0.9, materials: [], outputs: [] })
 const currentMat = ref({ item_id: null, quantity: 1 })
 const currentOut = ref({ item_id: null, quantity: 1 })
 
 const dialogTitle = computed(() => (editingId.value ? '编辑配方' : '新建配方'))
+const typeLabel: Record<string, string> = { ALCHEMY: '炼金', CRAFT: '制造', SYNTHESIS: '合成' }
 const filteredRecipes = computed(() => {
   if (showInactive.value) return recipes.value
   return recipes.value.filter(r => r.is_active)
@@ -48,7 +49,7 @@ function addOut() {
 
 function resetForm() {
   editingId.value = null
-  form.value = { name: '', category: '炼金', expected_success_rate: 0.9, materials: [], outputs: [] }
+  form.value = { name: '', recipe_type: 'ALCHEMY', expected_success_rate: 0.9, materials: [], outputs: [] }
 }
 
 function openCreate() {
@@ -60,7 +61,7 @@ function openEdit(row: any) {
   editingId.value = row.id
   form.value = {
     name: row.name,
-    category: row.category || '炼金',
+    recipe_type: row.recipe_type || 'ALCHEMY',
     expected_success_rate: row.expected_success_rate,
     materials: (row.materials || []).map((m: any) => ({ item_id: m.item_id, quantity: m.quantity })),
     outputs: (row.outputs || []).map((o: any) => ({ item_id: o.item_id, quantity: o.quantity })),
@@ -108,7 +109,9 @@ async function remove(row: any) {
 
     <el-table :data="filteredRecipes" style="margin-top: 16px">
       <el-table-column prop="name" label="配方" width="160" />
-      <el-table-column prop="category" label="分类" width="90" />
+      <el-table-column label="类型" width="90">
+        <template #default="{ row }">{{ typeLabel[row.recipe_type] || row.recipe_type }}</template>
+      </el-table-column>
       <el-table-column label="材料" min-width="200">
         <template #default="{ row }">
           <ItemChip v-for="m in row.materials" :key="m.id" :name="m.item_name || '#' + m.item_id" :quantity="m.quantity" :icon-url="m.icon_url" />
@@ -135,10 +138,11 @@ async function remove(row: any) {
         <el-form-item label="名称" required>
           <el-input v-model="form.name" />
         </el-form-item>
-        <el-form-item label="分类">
-          <el-select v-model="form.category" style="width: 100%">
-            <el-option label="炼金" value="炼金" />
-            <el-option label="制造" value="制造" />
+        <el-form-item label="类型">
+          <el-select v-model="form.recipe_type" style="width: 100%">
+            <el-option label="炼金 ALCHEMY" value="ALCHEMY" />
+            <el-option label="制造 CRAFT" value="CRAFT" />
+            <el-option label="合成 SYNTHESIS" value="SYNTHESIS" />
           </el-select>
         </el-form-item>
         <el-form-item label="理论成功率">

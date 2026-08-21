@@ -11,9 +11,6 @@ export interface Item {
   stack_size?: number
   tags: string[]
   roles: string[]
-  vendor_buy_price?: number
-  market_price?: number
-  manual_price?: number
   importance_score: number
   is_active: boolean
   created_at: string
@@ -42,7 +39,6 @@ export interface DungeonRun {
   gross_value: number
   repair_cost: number
   consumable_cost: number
-  other_cost: number
   total_cost: number
   net_profit: number
   profit_per_hour: number

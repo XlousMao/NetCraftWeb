@@ -80,6 +80,7 @@ def delete_dungeon(dungeon_id: int, db: Session = Depends(get_db)):
 # ---- Dungeon Run ----
 
 def _run_out(db: Session, run: DungeonRun) -> DungeonRunOut:
+    from app.analysis.service import compute_run_economy
     from app.schemas.dungeon import ConsumptionOut, LootOut, RepairOut
 
     loots = []
@@ -101,6 +102,18 @@ def _run_out(db: Session, run: DungeonRun) -> DungeonRunOut:
         repairs.append(ro)
     out = DungeonRunOut.model_validate(run)
     out.dungeon_name = run.dungeon.name if run.dungeon else None
+    out.total_duration_minutes = float(run.total_duration_minutes)
+    # 动态计算利润
+    e = compute_run_economy(db, run)
+    out.gross_value = float(e["gross_value"])
+    out.repair_cost = float(e["repair_cost"])
+    out.consumable_cost = float(e["consumable_cost"])
+    out.total_cost = float(e["total_cost"])
+    out.net_profit = float(e["net_profit"])
+    out.profit_per_hour = float(e["profit_per_hour"])
+    out.gross_value_fiat = float(e["gross_value_fiat"]) if e["gross_value_fiat"] is not None else None
+    out.net_profit_fiat = float(e["net_profit_fiat"]) if e["net_profit_fiat"] is not None else None
+    out.profit_per_hour_fiat = float(e["profit_per_hour_fiat"]) if e["profit_per_hour_fiat"] is not None else None
     out.loots = loots
     out.consumptions = consumptions
     out.repairs = repairs

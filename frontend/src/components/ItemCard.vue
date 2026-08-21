@@ -10,6 +10,15 @@ const router = useRouter()
 const importance = computed(() => Math.round((props.item.importance_score / 20) * 5))
 const stars = computed(() => '★'.repeat(Math.min(5, Math.max(1, importance.value))))
 
+const ROLE_LABEL: Record<string, string> = {
+  MATERIAL: '材料', EQUIPMENT: '装备', CONSUMABLE: '消耗品', CURRENCY: '货币',
+  TRADEABLE: '可交易', DUNGEON_DROP: '掉落', REPAIR_MATERIAL: '维修',
+  RECIPE_MATERIAL: '配方材料', RECIPE_OUTPUT: '配方产出',
+}
+function roleLabel(r: string) {
+  return ROLE_LABEL[r] || r
+}
+
 function goDetail() {
   router.push(`/items/${props.item.id}`)
 }
@@ -38,9 +47,8 @@ function onRemove(e: Event) {
     <div class="body">
       <div class="name">{{ item.name }}</div>
       <div class="category">{{ item.category || '未分类' }}</div>
-      <div class="prices">
-        <span class="vendor">商人 {{ item.vendor_buy_price ?? '—' }}</span>
-        <span class="market">市场 {{ item.market_price ?? '—' }}</span>
+      <div class="roles">
+        <span v-for="r in (item.roles || []).slice(0, 3)" :key="r" class="role-tag">{{ roleLabel(r) }}</span>
       </div>
       <div class="meta">
         <span>关联 {{ item.relation_count }}</span>
@@ -105,17 +113,19 @@ function onRemove(e: Event) {
   color: #909399;
   margin: 4px 0;
 }
-.prices {
+.roles {
   display: flex;
-  gap: 10px;
-  font-size: 12px;
+  gap: 4px;
+  flex-wrap: wrap;
   margin: 4px 0;
+  min-height: 20px;
 }
-.vendor {
-  color: #e6a23c;
-}
-.market {
-  color: #3b82f6;
+.role-tag {
+  font-size: 11px;
+  color: #606266;
+  background: #f4f4f5;
+  border-radius: 4px;
+  padding: 1px 6px;
 }
 .meta {
   display: flex;

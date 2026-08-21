@@ -8,11 +8,15 @@ from app.schemas.recipe import ProductionRecordCreate
 from app.services.recipe import RecipeService
 
 
-def _setup_recipe(db, make_item):
-    red = make_item("红草", vendor_buy_price=25)
-    crystal = make_item("魔晶", vendor_buy_price=120)
-    bottle = make_item("空瓶", vendor_buy_price=5)
-    potion = make_item("高级生命药水", vendor_buy_price=120)
+def _setup_recipe(db, make_item, set_price):
+    red = make_item("红草")
+    crystal = make_item("魔晶")
+    bottle = make_item("空瓶")
+    potion = make_item("高级生命药水")
+    set_price(red.id, 25)
+    set_price(crystal.id, 120)
+    set_price(bottle.id, 5)
+    set_price(potion.id, 120)
 
     recipe = Recipe(name="高级生命药水", expected_success_rate=Decimal("0.9"))
     db.add(recipe)
@@ -25,13 +29,13 @@ def _setup_recipe(db, make_item):
     return recipe, potion
 
 
-def test_production_record_cost_and_roi(db, make_item):
-    recipe, potion = _setup_recipe(db, make_item)
+def test_production_record_cost_and_roi(db, make_item, currency_setup, set_price):
+    recipe, potion = _setup_recipe(db, make_item, set_price)
 
     # 理论单次成本 = 3*25 + 2*120 + 1*5 = 320
     payload = ProductionRecordCreate(
         recipe_id=recipe.id,
-        started_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        started_at=datetime.now(timezone.utc),
         attempted_count=100,
         success_count=87,
     )

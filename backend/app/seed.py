@@ -109,35 +109,30 @@ def _seed_fiat(db, currency: dict[str, Item]):
 
 
 def _seed_items(db) -> dict[str, Item]:
-    """奶块主题物品：材料/消耗品/装备。"""
+    """奶块主题物品：材料/消耗品/装备（价格由市场观察记录，非 Item 属性）。"""
     specs = [
-        ("精钢锭", "材料", 80, 105, ["MATERIAL", "REPAIR_MATERIAL", "RECIPE_OUTPUT", "TRADEABLE"], "高级金属锭，装备维修核心材料"),
-        ("铁矿", "材料", 15, 20, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "基础矿石"),
-        ("银矿", "材料", 35, 42, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "常见矿石"),
-        ("秘银锭", "材料", 200, 240, ["MATERIAL", "RECIPE_OUTPUT", "TRADEABLE"], "稀有金属锭"),
-        ("红草", "材料", 25, 30, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "常见药草"),
-        ("空瓶", "材料", 5, 8, ["MATERIAL", "RECIPE_MATERIAL"], "炼金容器"),
-        ("奥术水晶", "材料", 90, 110, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "奥术能量结晶"),
-        ("符文石", "材料", 45, 55, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "铭刻符文的石头"),
-        ("暗影之尘", "材料", 130, 160, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "暗影生物掉落的粉末"),
-        ("皮革", "材料", 22, 28, ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "怪物皮革"),
-        ("生命药水", "消耗品", 40, 55, ["CONSUMABLE", "RECIPE_OUTPUT", "TRADEABLE"], "恢复少量生命"),
-        ("高级生命药水", "消耗品", 120, 150, ["CONSUMABLE", "RECIPE_OUTPUT", "TRADEABLE"], "恢复大量生命"),
-        ("强力治疗药水", "消耗品", 85, 100, ["CONSUMABLE", "RECIPE_OUTPUT"], "强效治疗"),
-        ("魔法卷轴", "消耗品", 60, 75, ["CONSUMABLE", "DUNGEON_DROP"], "一次性魔法道具"),
-        ("传送卷轴", "消耗品", 30, 35, ["CONSUMABLE", "DUNGEON_DROP"], "回城道具"),
-        ("龙骑士剑", "装备", None, 5000, ["EQUIPMENT", "TRADEABLE"], "传奇单手剑"),
-        ("秘银甲", "装备", None, 4200, ["EQUIPMENT", "TRADEABLE"], "稀有铠甲"),
-        ("符文法杖", "装备", None, 4600, ["EQUIPMENT", "TRADEABLE"], "秘法法杖"),
+        ("精钢锭", "材料", ["MATERIAL", "REPAIR_MATERIAL", "RECIPE_OUTPUT", "TRADEABLE"], "高级金属锭，装备维修核心材料"),
+        ("铁矿", "材料", ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "基础矿石"),
+        ("银矿", "材料", ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "常见矿石"),
+        ("秘银锭", "材料", ["MATERIAL", "RECIPE_OUTPUT", "TRADEABLE"], "稀有金属锭"),
+        ("红草", "材料", ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "常见药草"),
+        ("空瓶", "材料", ["MATERIAL", "RECIPE_MATERIAL"], "炼金容器"),
+        ("奥术水晶", "材料", ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "奥术能量结晶"),
+        ("符文石", "材料", ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "铭刻符文的石头"),
+        ("暗影之尘", "材料", ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "暗影生物掉落的粉末"),
+        ("皮革", "材料", ["MATERIAL", "RECIPE_MATERIAL", "DUNGEON_DROP"], "怪物皮革"),
+        ("生命药水", "消耗品", ["CONSUMABLE", "RECIPE_OUTPUT", "TRADEABLE"], "恢复少量生命"),
+        ("高级生命药水", "消耗品", ["CONSUMABLE", "RECIPE_OUTPUT", "TRADEABLE"], "恢复大量生命"),
+        ("强力治疗药水", "消耗品", ["CONSUMABLE", "RECIPE_OUTPUT"], "强效治疗"),
+        ("魔法卷轴", "消耗品", ["CONSUMABLE", "DUNGEON_DROP"], "一次性魔法道具"),
+        ("传送卷轴", "消耗品", ["CONSUMABLE", "DUNGEON_DROP"], "回城道具"),
+        ("龙骑士剑", "装备", ["EQUIPMENT", "TRADEABLE"], "传奇单手剑"),
+        ("秘银甲", "装备", ["EQUIPMENT", "TRADEABLE"], "稀有铠甲"),
+        ("符文法杖", "装备", ["EQUIPMENT", "TRADEABLE"], "秘法法杖"),
     ]
     result: dict[str, Item] = {}
-    for name, category, vendor, market, roles, desc in specs:
-        item = Item(
-            name=name, display_name=name, category=category, description=desc,
-            vendor_buy_price=Decimal(vendor) if vendor is not None else None,
-            market_price=Decimal(market) if market is not None else None,
-            tags=[],
-        )
+    for name, category, roles, desc in specs:
+        item = Item(name=name, display_name=name, category=category, description=desc, tags=[])
         db.add(item)
         db.flush()
         for r in roles:
@@ -201,7 +196,8 @@ def _seed_recipes(db, items: dict[str, Item], currency: dict[str, Item]) -> list
     ]
     result = []
     for name, category, rate, mats, outs in specs:
-        r = Recipe(name=name, category=category, expected_success_rate=rate)
+        recipe_type = "ALCHEMY" if category == "炼金" else "CRAFT"
+        r = Recipe(name=name, recipe_type=recipe_type, category=category, expected_success_rate=rate)
         db.add(r)
         db.flush()
         for item_name, qty in mats:
@@ -215,23 +211,42 @@ def _seed_recipes(db, items: dict[str, Item], currency: dict[str, Item]) -> list
     return result
 
 
-def _seed_price_history(db, items: dict[str, Item]):
-    """为关键物品生成历史价格（含不同时间点）。"""
+def _seed_market_observations(db, items: dict[str, Item], currency: dict[str, Item]):
+    """为物品记录 NPC 价、市场价与历史价格（市场观察）。"""
     vs = ValuationService(db)
+    diamond = currency["钻石"]
     now = datetime.now(timezone.utc)
-    hist = [
-        ("精钢锭", "vendor", [70, 72, 75, 78, 80]),
-        ("精钢锭", "market", [90, 95, 100, 105]),
-        ("秘银锭", "vendor", [180, 190, 200]),
-        ("红草", "vendor", [22, 24, 25]),
-        ("高级生命药水", "market", [130, 140, 150]),
+
+    # (name, npc_price, sell_price)
+    price_table = [
+        ("精钢锭", 80, 105), ("铁矿", 15, 20), ("银矿", 35, 42),
+        ("秘银锭", 200, 240), ("红草", 25, 30), ("空瓶", 5, 8),
+        ("奥术水晶", 90, 110), ("符文石", 45, 55), ("暗影之尘", 130, 160),
+        ("皮革", 22, 28), ("生命药水", 40, 55), ("高级生命药水", 120, 150),
+        ("强力治疗药水", 85, 100), ("魔法卷轴", 60, 75), ("传送卷轴", 30, 35),
+        ("龙骑士剑", 5000, None), ("秘银甲", 4200, None), ("符文法杖", 4600, None),
     ]
-    for name, ptype, prices in hist:
+    for name, npc, sell in price_table:
+        item = items[name]
+        if npc:
+            vs.record_observation(item.id, "NPC_PRICE", Decimal(npc), price_item_id=diamond.id, source="seed", observed_at=now)
+        if sell:
+            vs.record_observation(item.id, "SELL_OFFER", Decimal(sell), price_item_id=diamond.id, source="seed", observed_at=now)
+
+    # 历史价格（多时间点，验证历史价格按时间生效）
+    hist = [
+        ("精钢锭", "NPC_PRICE", [70, 72, 75, 78, 80]),
+        ("精钢锭", "SELL_OFFER", [90, 95, 100, 105]),
+        ("秘银锭", "NPC_PRICE", [180, 190, 200]),
+        ("红草", "NPC_PRICE", [22, 24, 25]),
+        ("高级生命药水", "SELL_OFFER", [130, 140, 150]),
+    ]
+    for name, otype, prices in hist:
         item = items[name]
         for i, p in enumerate(prices):
-            vs.record_price(
-                item.id, ptype, Decimal(p), source="seed",
-                observed_at=now - timedelta(days=len(prices) - i),
+            vs.record_observation(
+                item.id, otype, Decimal(p), price_item_id=diamond.id,
+                source="seed", observed_at=now - timedelta(days=len(prices) - i),
             )
     db.flush()
 
@@ -338,7 +353,7 @@ def seed() -> None:
         dungeons = _seed_dungeons(db)
         _seed_equipments(db, items, currency)
         recipes = _seed_recipes(db, items, currency)
-        _seed_price_history(db, items)
+        _seed_market_observations(db, items, currency)
         _seed_runs(db, items, currency, dungeons)
         _seed_production(db, recipes)
 

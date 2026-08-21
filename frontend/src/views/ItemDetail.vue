@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { itemApi } from '@/api'
+import { itemApi, analysisApi } from '@/api'
 import ImageUpload from '@/components/ImageUpload.vue'
 import RelationGraph from '@/components/RelationGraph.vue'
 import Chart from '@/components/Chart.vue'
@@ -12,12 +12,27 @@ const itemId = Number(route.params.id)
 const item = ref<any>(null)
 const graph = ref<any>(null)
 const activeTab = ref('overview')
+const craftDecision = ref<any>(null)
 
-const priceForm = ref({ price_type: 'vendor', price: null as number | null, source: '' })
+const marketForm = ref({
+  observation_type: 'SELL_OFFER',
+  price_quantity: null as number | null,
+  quantity: 1,
+  seller_name: '',
+  source: '',
+})
+
+const OBS_TYPE_LABEL: Record<string, string> = {
+  SELL_OFFER: '出售挂单',
+  BUY_ORDER: '收购订单',
+  NPC_PRICE: '商人定价',
+  MANUAL_ESTIMATE: '手动估值',
+}
 
 onMounted(async () => {
   await fetchItem()
   await fetchGraph()
+  await fetchDecision()
 })
 
 async function fetchItem() {
@@ -30,42 +45,60 @@ async function fetchGraph() {
   graph.value = data
 }
 
+async function fetchDecision() {
+  const { data } = await analysisApi.craftVsBuy(itemId)
+  craftDecision.value = data
+}
+
 const stars = computed(() => {
   const score = item.value?.importance_score ?? 0
   return '★'.repeat(Math.min(5, Math.max(1, Math.round(score / 20 * 5))))
 })
 
-const priceChart = computed(() => {
+const marketChart = computed(() => {
   const hist = item.value?.price_history || []
-  const vendor = hist.filter((p: any) => p.price_type === 'vendor').map((p: any) => [p.observed_at, p.price])
+  const byType: Record<string, any[]> = {}
+  for (const p of hist) {
+    ;(byType[p.observation_type] = byType[p.observation_type] || []).push([p.observed_at, p.unit_price])
+  }
+  const colors: Record<string, string> = {
+    NPC_PRICE: '#e6a23c', SELL_OFFER: '#3b82f6', BUY_ORDER: '#67c23a', MANUAL_ESTIMATE: '#909399',
+  }
   return {
     tooltip: { trigger: 'axis' },
+    legend: { data: Object.keys(byType).map((t) => OBS_TYPE_LABEL[t] || t) },
     xAxis: { type: 'time' },
-    yAxis: { type: 'value', name: '价格' },
-    series: [
-      { name: '商人价', type: 'line', data: vendor, showSymbol: true, itemStyle: { color: '#e6a23c' } },
-    ],
+    yAxis: { type: 'value', name: '价格(钻石)' },
+    series: Object.keys(byType).map((t) => ({
+      name: OBS_TYPE_LABEL[t] || t,
+      type: 'line',
+      data: byType[t],
+      showSymbol: true,
+      itemStyle: { color: colors[t] || '#409eff' },
+    })),
   }
 })
 
-async function recordPrice() {
-  if (!priceForm.value.price) {
+async function recordMarket() {
+  if (!marketForm.value.price_quantity) {
     ElMessage.warning('请输入价格')
     return
   }
-  await itemApi.recordPrice(itemId, priceForm.value)
-  ElMessage.success('价格已记录')
-  priceForm.value.price = null
+  await itemApi.recordMarket(itemId, marketForm.value)
+  ElMessage.success('市场观察已记录')
+  marketForm.value.price_quantity = null
+  marketForm.value.seller_name = ''
+  marketForm.value.source = ''
   fetchItem()
+  fetchDecision()
 }
 
 function primaryImage() {
   return item.value?.images?.find((i: any) => i.is_primary) || item.value?.images?.[0]
 }
 
-function priceTypeLabel(type: string): string {
-  const map: Record<string, string> = { vendor: '商人', market: '市场', manual: '手动' }
-  return map[type] || type
+function summary() {
+  return item.value?.market_summary || {}
 }
 </script>
 
@@ -83,16 +116,15 @@ function priceTypeLabel(type: string): string {
             <el-tag size="small">{{ item.category || '未分类' }}</el-tag>
             <el-tag v-for="r in item.roles || []" :key="r" size="small" type="info" effect="plain">{{ r }}</el-tag>
             <span class="stars" style="color: #f59e0b">{{ stars }}</span>
-            <span class="text-muted">重要性 {{ item.importance_score }}</span>
-          </div>
-          <div class="prices">
-            <span>商人价 <b>{{ item.vendor_buy_price ?? '—' }}</b></span>
-            <span>市场价 <b>{{ item.market_price ?? '—' }}</b></span>
-            <span>手动估值 <b>{{ item.manual_price ?? '—' }}</b></span>
           </div>
           <div v-if="item.current_value" class="current-value">
             当前估值：<b>{{ item.current_value.base_currency_value }} 钻石</b>
             <span v-if="item.current_value.fiat_value != null" class="text-muted">≈ {{ item.current_value.fiat_value.toFixed(3) }} RMB</span>
+          </div>
+          <div class="market-summary">
+            <span>价格区间 <b>{{ summary().min ?? '—' }} ~ {{ summary().max ?? '—' }}</b></span>
+            <span>最高收购 <b class="buy">{{ summary().highest_buy_order ?? '—' }}</b></span>
+            <span>最低出售 <b class="sell">{{ summary().lowest_sell_offer ?? '—' }}</b></span>
           </div>
         </div>
       </div>
@@ -109,6 +141,62 @@ function priceTypeLabel(type: string): string {
           </el-descriptions>
         </el-tab-pane>
 
+        <el-tab-pane label="市场观察" name="market">
+          <div class="market-form">
+            <el-select v-model="marketForm.observation_type" style="width: 130px">
+              <el-option label="出售挂单" value="SELL_OFFER" />
+              <el-option label="收购订单" value="BUY_ORDER" />
+              <el-option label="商人定价" value="NPC_PRICE" />
+              <el-option label="手动估值" value="MANUAL_ESTIMATE" />
+            </el-select>
+            <el-input-number v-model="marketForm.price_quantity" :min="0" placeholder="价格(钻石)" />
+            <span>换</span>
+            <el-input-number v-model="marketForm.quantity" :min="1" />
+            <span>个</span>
+            <el-input v-model="marketForm.seller_name" placeholder="卖家/地点（可选）" style="width: 150px" />
+            <el-button type="primary" @click="recordMarket">记录</el-button>
+          </div>
+          <Chart v-if="item.price_history?.length" :option="marketChart" height="280px" />
+          <el-empty v-else description="暂无价格历史" />
+          <el-table :data="item.market_observations || []" size="small" style="margin-top: 8px">
+            <el-table-column label="类型" width="110">
+              <template #default="{ row }">{{ OBS_TYPE_LABEL[row.observation_type] || row.observation_type }}</template>
+            </el-table-column>
+            <el-table-column label="单价" width="100">
+              <template #default="{ row }">{{ row.price_quantity }} / {{ row.quantity }}</template>
+            </el-table-column>
+            <el-table-column prop="seller_name" label="卖家/地点" width="120" />
+            <el-table-column prop="source" label="来源" />
+            <el-table-column label="时间" width="180">
+              <template #default="{ row }">{{ new Date(row.observed_at).toLocaleString() }}</template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+
+        <el-tab-pane label="决策分析" name="decision">
+          <div v-if="craftDecision && !craftDecision.error">
+            <el-alert
+              :type="craftDecision.recommendation === 'craft' ? 'success' : 'info'"
+              :closable="false"
+              :title="craftDecision.recommendation_text"
+              style="margin-bottom: 16px"
+            />
+            <el-descriptions :column="2" border>
+              <el-descriptions-item label="直接购买价">{{ craftDecision.buy_price }} 钻石</el-descriptions-item>
+              <el-descriptions-item label="购买 RMB">{{ craftDecision.buy_fiat != null ? craftDecision.buy_fiat.toFixed(3) + ' RMB' : '—' }}</el-descriptions-item>
+            </el-descriptions>
+            <el-table :data="craftDecision.craft_options || []" size="small" style="margin-top: 16px">
+              <el-table-column prop="recipe_name" label="配方" />
+              <el-table-column prop="material_cost" label="材料成本" width="110" />
+              <el-table-column prop="per_unit_cost" label="单件成本" width="110" />
+              <el-table-column label="成功率" width="100">
+                <template #default="{ row }">{{ (row.success_rate * 100).toFixed(0) }}%</template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <el-empty v-else description="暂无制作配方，只能直接购买" />
+        </el-tab-pane>
+
         <el-tab-pane label="图片" name="images">
           <ImageUpload :item-id="itemId" @uploaded="fetchItem" />
           <div class="image-list">
@@ -117,21 +205,6 @@ function priceTypeLabel(type: string): string {
               <el-tag v-if="img.is_primary" size="small" type="success">主图</el-tag>
             </div>
           </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="价格" name="price">
-          <div class="price-form">
-            <el-select v-model="priceForm.price_type" style="width: 120px">
-              <el-option label="商人价" value="vendor" />
-              <el-option label="市场价" value="market" />
-              <el-option label="手动估值" value="manual" />
-            </el-select>
-            <el-input-number v-model="priceForm.price" :min="0" />
-            <el-input v-model="priceForm.source" placeholder="来源（可选）" style="width: 160px" />
-            <el-button type="primary" @click="recordPrice">记录价格</el-button>
-          </div>
-          <Chart v-if="item.price_history?.length" :option="priceChart" height="280px" />
-          <el-empty v-else description="暂无价格历史" />
         </el-tab-pane>
 
         <el-tab-pane label="副本来源" name="dungeons">
@@ -157,19 +230,6 @@ function priceTypeLabel(type: string): string {
             <el-table-column prop="quantity" label="所需数量" />
           </el-table>
           <el-empty v-if="!item.relations?.some((r: any) => r.relation_type === 'REQUIRES_REPAIR')" description="暂未被装备维修消耗" />
-        </el-tab-pane>
-
-        <el-tab-pane label="历史记录" name="history">
-          <el-table :data="item.price_history || []" size="small">
-            <el-table-column label="类型" width="100">
-              <template #default="{ row }">{{ priceTypeLabel(row.price_type) }}</template>
-            </el-table-column>
-            <el-table-column prop="price" label="价格" width="120" />
-            <el-table-column prop="source" label="来源" />
-            <el-table-column label="时间" width="200">
-              <template #default="{ row }">{{ new Date(row.observed_at).toLocaleString() }}</template>
-            </el-table-column>
-          </el-table>
         </el-tab-pane>
 
         <el-tab-pane label="关系图" name="graph">
@@ -214,13 +274,31 @@ function priceTypeLabel(type: string): string {
   align-items: center;
   margin-bottom: 12px;
 }
-.prices {
+.current-value b {
+  color: #3b82f6;
+  font-size: 18px;
+}
+.market-summary {
   display: flex;
   gap: 20px;
-  font-size: 14px;
+  font-size: 13px;
+  margin-top: 10px;
 }
-.prices b {
+.market-summary b {
   color: #e6a23c;
+}
+.market-summary .buy {
+  color: #67c23a;
+}
+.market-summary .sell {
+  color: #f56c6c;
+}
+.market-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
 }
 .image-list {
   display: flex;
@@ -238,10 +316,5 @@ function priceTypeLabel(type: string): string {
   object-fit: contain;
   border: 1px solid #eef0f3;
   border-radius: 6px;
-}
-.price-form {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 16px;
 }
 </style>

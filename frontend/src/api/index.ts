@@ -16,8 +16,9 @@ export const itemApi = {
     client.post(`/items/${id}/images/paste`, blob, {
       headers: { 'Content-Type': 'application/octet-stream' },
     }),
-  getPrices: (id: number) => client.get(`/items/${id}/prices`),
-  recordPrice: (id: number, data: any) => client.post(`/items/${id}/prices`, data),
+  listMarket: (id: number) => client.get(`/items/${id}/market`),
+  recordMarket: (id: number, data: any) => client.post(`/items/${id}/market`, data),
+  marketSummary: (id: number) => client.get(`/items/${id}/market/summary`),
   relationGraph: (id: number, depth = 2) =>
     client.get(`/items/${id}/relation-graph`, { params: { depth } }),
 }
@@ -84,6 +85,9 @@ export const analysisApi = {
   recipeRankings: () => client.get('/analysis/recipe-rankings'),
   activityEfficiency: (params: any) => client.get('/analysis/activity-efficiency', { params }),
   value: (data: any) => client.post('/analysis/value', data),
+  craftVsBuy: (itemId: number) => client.get('/analysis/craft-vs-buy', { params: { item_id: itemId } }),
+  recipeDecision: (recipeId: number) => client.get('/analysis/recipe-decision', { params: { recipe_id: recipeId } }),
+  dungeonDecision: (dungeonId: number) => client.get('/analysis/dungeon-decision', { params: { dungeon_id: dungeonId } }),
 }
 
 export const dashboardApi = {

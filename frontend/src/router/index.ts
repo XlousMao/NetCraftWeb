@@ -19,6 +19,7 @@ const router = createRouter({
         { path: 'activities', name: 'activities', component: () => import('@/views/Activities.vue'), meta: { title: '活动' } },
         { path: 'analysis', name: 'analysis', component: () => import('@/views/Analysis.vue'), meta: { title: '周期分析' } },
         { path: 'currency', name: 'currency', component: () => import('@/views/Currency.vue'), meta: { title: '货币体系' } },
+        { path: 'craft-analysis', name: 'craft-analysis', component: () => import('@/views/CraftAnalysis.vue'), meta: { title: '制作分析' } },
       ],
     },
   ],

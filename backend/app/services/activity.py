@@ -78,7 +78,9 @@ class ActivityService:
         return removed
 
     def sync_dungeon_run(self, run: DungeonRun) -> ActivityRecord:
-        """副本完成后同步活动账本。"""
+        """副本完成后同步活动账本（利润动态计算）。"""
+        from app.analysis.service import compute_run_economy
+
         existing = self._upsert_by_ref("dungeon_run", run.id)
         record = existing or ActivityRecord(
             activity_type="DUNGEON",
@@ -86,14 +88,15 @@ class ActivityService:
             reference_type="dungeon_run",
             reference_id=run.id,
         )
+        e = compute_run_economy(self.db, run)
         record.started_at = run.started_at
         record.ended_at = run.ended_at
         record.duration_minutes = run.total_duration_minutes
-        record.gross_value = run.gross_value
-        record.total_cost = run.total_cost
-        record.net_profit = run.net_profit
-        record.profit_per_hour = run.profit_per_hour
-        record.fiat_value = run.net_profit_fiat
+        record.gross_value = e["gross_value"]
+        record.total_cost = e["total_cost"]
+        record.net_profit = e["net_profit"]
+        record.profit_per_hour = e["profit_per_hour"]
+        record.fiat_value = e["net_profit_fiat"]
         record.notes = run.notes
         if existing is None:
             self.db.add(record)

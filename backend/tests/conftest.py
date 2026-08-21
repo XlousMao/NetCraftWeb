@@ -1,4 +1,4 @@
-"""pytest 夹具：独立内存 SQLite 数据库 + 货币体系辅助。"""
+"""pytest 夹具：独立内存 SQLite 数据库 + 货币体系 + 市场观察辅助。"""
 
 import os
 import sys
@@ -6,6 +6,9 @@ from pathlib import Path
 
 # 确保 backend 根目录在 sys.path，可导入 app
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine
@@ -44,7 +47,7 @@ def db(engine):
 
 @pytest.fixture()
 def make_item(db):
-    """创建物品的辅助函数。"""
+    """创建物品的辅助函数（价格由市场观察记录，非 Item 属性）。"""
     from app.models.item import Item
 
     def _make(name, **kwargs):
@@ -62,8 +65,6 @@ def currency_setup(db, make_item):
 
     返回 {name: Item}。
     """
-    from decimal import Decimal
-
     from app.models.currency import (
         CurrencyConversionRule,
         CurrencyDenomination,
@@ -71,16 +72,12 @@ def currency_setup(db, make_item):
     )
     from app.models.item import ItemRole
 
-    diamond = make_item("钻石", category="货币", vendor_buy_price=1)
+    diamond = make_item("钻石", category="货币")
     diamond_block = make_item("钻石块", category="货币")
     diamond_crystal = make_item("钻石结晶", category="货币")
 
-    for item, role in [
-        (diamond, "CURRENCY"),
-        (diamond_block, "CURRENCY"),
-        (diamond_crystal, "CURRENCY"),
-    ]:
-        db.add(ItemRole(item_id=item.id, role=role))
+    for item in (diamond, diamond_block, diamond_crystal):
+        db.add(ItemRole(item_id=item.id, role="CURRENCY"))
 
     system = CurrencySystem(name="奶块钻石经济体系", base_currency_item_id=diamond.id)
     db.add(system)
@@ -118,3 +115,24 @@ def currency_setup(db, make_item):
     )
     db.flush()
     return {"钻石": diamond, "钻石块": diamond_block, "钻石结晶": diamond_crystal}
+
+
+@pytest.fixture()
+def set_price(db, currency_setup):
+    """记录一条市场观察（默认 NPC_PRICE，钻石计价），返回 helper。"""
+    from app.services.valuation import ValuationService
+
+    diamond = currency_setup["钻石"]
+    vs = ValuationService(db)
+
+    def _set(item_id, price, obs_type="NPC_PRICE", observed_at=None):
+        vs.record_observation(
+            item_id,
+            obs_type,
+            Decimal(str(price)),
+            price_item_id=diamond.id,
+            observed_at=observed_at or datetime.now(timezone.utc),
+        )
+        db.flush()
+
+    return _set

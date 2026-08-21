@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.analysis import service as analysis
 from app.models.dungeon import DungeonLoot, DungeonRun
-from app.models.item import Item, ItemPriceHistory
+from app.models.item import Item
 from app.models.recipe import ProductionRecord
 from app.schemas.common import ValuationRequest, ValuationResult
 from app.services.valuation import ValuationService
@@ -61,6 +61,29 @@ def recompute_importance(db: Session = Depends(get_db)):
     return {"updated": count}
 
 
+# ---- 决策分析 ----
+
+@router.get("/craft-vs-buy", response_model=dict)
+def craft_vs_buy(item_id: int = Query(...), db: Session = Depends(get_db)):
+    from app.analysis.decision import analyze_craft_vs_buy
+
+    return analyze_craft_vs_buy(db, item_id)
+
+
+@router.get("/recipe-decision", response_model=dict)
+def recipe_decision(recipe_id: int = Query(...), db: Session = Depends(get_db)):
+    from app.analysis.decision import analyze_recipe_decision
+
+    return analyze_recipe_decision(db, recipe_id)
+
+
+@router.get("/dungeon-decision", response_model=dict)
+def dungeon_decision(dungeon_id: int = Query(...), db: Session = Depends(get_db)):
+    from app.analysis.decision import analyze_dungeon_decision
+
+    return analyze_dungeon_decision(db, dungeon_id)
+
+
 # ---- 导出 ----
 
 def _rows_to_csv(headers: list[str], rows: list[list]) -> StreamingResponse:
@@ -79,11 +102,14 @@ def _rows_to_csv(headers: list[str], rows: list[list]) -> StreamingResponse:
 @router.get("/export/items")
 def export_items(fmt: str = Query("csv"), db: Session = Depends(get_db)):
     items = db.execute(select(Item)).scalars().all()
+    from app.services.valuation import ValuationService
+
+    vs = ValuationService(db)
     if fmt == "json":
         data = [
             {"id": i.id, "name": i.name, "category": i.category,
-             "vendor_buy_price": i.vendor_buy_price, "market_price": i.market_price,
-             "manual_price": i.manual_price, "importance_score": i.importance_score}
+             "current_price": float(vs.get_unit_price(i.id, "auto")[0]),
+             "importance_score": i.importance_score}
             for i in items
         ]
         return StreamingResponse(
@@ -91,8 +117,11 @@ def export_items(fmt: str = Query("csv"), db: Session = Depends(get_db)):
             media_type="application/json",
             headers={"Content-Disposition": "attachment; filename=items.json"},
         )
-    headers = ["id", "name", "category", "vendor_buy_price", "market_price", "manual_price", "importance_score"]
-    rows = [[i.id, i.name, i.category, i.vendor_buy_price, i.market_price, i.manual_price, i.importance_score] for i in items]
+    headers = ["id", "name", "category", "current_price", "importance_score"]
+    rows = [
+        [i.id, i.name, i.category, float(vs.get_unit_price(i.id, "auto")[0]), i.importance_score]
+        for i in items
+    ]
     return _rows_to_csv(headers, rows)
 
 

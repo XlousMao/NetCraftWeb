@@ -99,14 +99,10 @@ def compute_item_importance(db: Session, item_id: int) -> tuple[float, dict]:
         is not None
     )
 
-    price = (
-        item.manual_price
-        if item.manual_price is not None
-        else item.market_price
-        if item.market_price is not None
-        else item.vendor_buy_price or 0
-    )
-    price = float(price)
+    # 当前价格：从市场观察查询（钻石口径）
+    from app.services.valuation import ValuationService
+
+    price = float(ValuationService(db).get_unit_price(item_id, "auto")[0])
     flow = float(total_flow)
 
     price_component = min(price / 100.0, 5.0)
@@ -170,32 +166,80 @@ def period_bounds(start: Optional[str], end: Optional[str]):
     return start_dt, end_dt
 
 
-def _period_aggregate(runs: list[DungeonRun]) -> dict:
-    """聚合一批副本记录的原始事实（Decimal）。"""
-    total_gross = sum((r.gross_value for r in runs), Decimal(0))
-    total_repair = sum((r.repair_cost for r in runs), Decimal(0))
-    total_consumable = sum((r.consumable_cost for r in runs), Decimal(0))
-    total_other = sum((r.other_cost for r in runs), Decimal(0))
-    total_cost = sum((r.total_cost for r in runs), Decimal(0))
-    net_profit = total_gross - total_cost
-    total_travel = sum((r.travel_minutes for r in runs), Decimal(0))
-    total_combat = sum((r.combat_minutes for r in runs), Decimal(0))
-    total_duration = sum((r.total_duration_minutes for r in runs), Decimal(0))
+def compute_run_economy(db: Session, run: DungeonRun) -> dict:
+    """动态计算单次副本经济指标（钻石 + RMB），不落库。
+
+    按 run.started_at 查询 MarketObservation 历史价，保证历史副本利润反映当时价格。
+    """
+    from app.services.valuation import ValuationService
+
+    vs = ValuationService(db)
+    t = run.started_at
+    gross = sum(
+        (vs.value(l.item_id, l.quantity, "auto", t).base_currency_value for l in run.loots),
+        Decimal(0),
+    )
+    repair = sum(
+        (vs.value(r.item_id, r.quantity, "auto", t).base_currency_value for r in run.repairs),
+        Decimal(0),
+    )
+    consumable = sum(
+        (vs.value(c.item_id, c.quantity, "auto", t).base_currency_value for c in run.consumptions),
+        Decimal(0),
+    )
+    total_cost = repair + consumable
+    net = gross - total_cost
+    duration = run.total_duration_minutes
+    gross_fiat = vs.fiat.value(gross, t)
+    net_fiat = vs.fiat.value(net, t)
+    return {
+        "gross_value": gross,
+        "repair_cost": repair,
+        "consumable_cost": consumable,
+        "total_cost": total_cost,
+        "net_profit": net,
+        "profit_per_hour": calculate_profit_per_hour(net, duration),
+        "gross_value_fiat": gross_fiat,
+        "net_profit_fiat": net_fiat,
+        "profit_per_hour_fiat": calculate_profit_per_hour(net_fiat or Decimal(0), duration),
+    }
+
+
+def _period_aggregate(db: Session, runs: list[DungeonRun]) -> dict:
+    """动态聚合一批副本记录的经济指标（Decimal）。"""
+    total_gross = total_repair = total_consumable = total_cost = net_profit = Decimal(0)
+    total_travel = total_combat = total_duration = Decimal(0)
+    gross_fiat = net_fiat = Decimal(0)
+    for r in runs:
+        e = compute_run_economy(db, r)
+        total_gross += e["gross_value"]
+        total_repair += e["repair_cost"]
+        total_consumable += e["consumable_cost"]
+        total_cost += e["total_cost"]
+        net_profit += e["net_profit"]
+        total_travel += r.travel_minutes
+        total_combat += r.combat_minutes
+        total_duration += r.total_duration_minutes
+        if e["gross_value_fiat"] is not None:
+            gross_fiat += e["gross_value_fiat"]
+        if e["net_profit_fiat"] is not None:
+            net_fiat += e["net_profit_fiat"]
     return {
         "total_gross": total_gross,
         "total_repair": total_repair,
         "total_consumable": total_consumable,
-        "total_other": total_other,
         "total_cost": total_cost,
         "net_profit": net_profit,
         "total_travel": total_travel,
         "total_combat": total_combat,
         "total_duration": total_duration,
+        "gross_fiat": gross_fiat,
+        "net_fiat": net_fiat,
     }
 
 
 def analyze_period(db: Session, start: Optional[str] = None, end: Optional[str] = None) -> dict:
-    """周期副本经济分析（掉落/维修/消耗/其他/净利润/每小时 + RMB 估值）。"""
+    """周期副本经济分析（掉落/维修/消耗/净利润/每小时 + RMB 估值）。"""
     start_dt, end_dt = period_bounds(start, end)
 
     runs = (
@@ -207,25 +251,16 @@ def analyze_period(db: Session, start: Optional[str] = None, end: Optional[str] 
         .scalars()
         .all()
     )
-    a = _period_aggregate(runs)
+    a = _period_aggregate(db, runs)
 
     profit_per_hour = calculate_profit_per_hour(a["net_profit"], a["total_duration"])
     cost_ratio = float(a["total_cost"] / a["total_gross"]) if a["total_gross"] > 0 else 0.0
-
-    # RMB 估值（基于记录时快照）
-    gross_fiat = sum(
-        (r.gross_value_fiat for r in runs if r.gross_value_fiat is not None), Decimal(0)
-    )
-    net_fiat = sum(
-        (r.net_profit_fiat for r in runs if r.net_profit_fiat is not None), Decimal(0)
-    )
-    profit_per_hour_fiat = calculate_profit_per_hour(net_fiat, a["total_duration"])
+    profit_per_hour_fiat = calculate_profit_per_hour(a["net_fiat"], a["total_duration"])
 
     # 成本构成
     cost_breakdown = [
         {"name": "维修", "value": round(float(a["total_repair"]), 2)},
         {"name": "消耗品", "value": round(float(a["total_consumable"]), 2)},
-        {"name": "其他", "value": round(float(a["total_other"]), 2)},
     ]
 
     return {
@@ -235,15 +270,15 @@ def analyze_period(db: Session, start: Optional[str] = None, end: Optional[str] 
         "total_gross": round(float(a["total_gross"]), 2),
         "total_repair": round(float(a["total_repair"]), 2),
         "total_consumable": round(float(a["total_consumable"]), 2),
-        "total_other": round(float(a["total_other"]), 2),
+        "total_other": 0.0,
         "total_cost": round(float(a["total_cost"]), 2),
         "net_profit": round(float(a["net_profit"]), 2),
         "total_travel_minutes": round(float(a["total_travel"]), 2),
         "total_combat_minutes": round(float(a["total_combat"]), 2),
         "total_duration_minutes": round(float(a["total_duration"]), 2),
         "profit_per_hour": float(profit_per_hour),
-        "gross_value_fiat": round(float(gross_fiat), 2),
-        "net_profit_fiat": round(float(net_fiat), 2),
+        "gross_value_fiat": round(float(a["gross_fiat"]), 2),
+        "net_profit_fiat": round(float(a["net_fiat"]), 2),
         "profit_per_hour_fiat": float(profit_per_hour_fiat),
         "cost_ratio": round(cost_ratio, 4),
         "cost_breakdown": cost_breakdown,
@@ -281,15 +316,16 @@ def dungeon_rankings(db: Session, start: Optional[str] = None, end: Optional[str
                 "net_profit_fiat": Decimal(0),
             }
         d = agg[key]
+        e = compute_run_economy(db, r)
         d["run_count"] += 1
-        d["gross_value"] += r.gross_value
-        d["total_cost"] += r.total_cost
-        d["net_profit"] += r.net_profit
-        d["repair_cost"] += r.repair_cost
-        d["consumable_cost"] += r.consumable_cost
+        d["gross_value"] += e["gross_value"]
+        d["total_cost"] += e["total_cost"]
+        d["net_profit"] += e["net_profit"]
+        d["repair_cost"] += e["repair_cost"]
+        d["consumable_cost"] += e["consumable_cost"]
         d["total_duration"] += r.total_duration_minutes
-        if r.net_profit_fiat is not None:
-            d["net_profit_fiat"] += r.net_profit_fiat
+        if e["net_profit_fiat"] is not None:
+            d["net_profit_fiat"] += e["net_profit_fiat"]
 
     result = []
     for d in agg.values():
@@ -458,14 +494,16 @@ def dashboard(db: Session) -> dict:
         .scalars()
         .all()
     )
+    from app.services.valuation import ValuationService
+
+    vs = ValuationService(db)
     important_items = [
         {
             "id": i.id,
             "name": i.name,
             "category": i.category,
             "importance_score": float(i.importance_score),
-            "vendor_buy_price": _f_or_none(i.vendor_buy_price),
-            "market_price": _f_or_none(i.market_price),
+            "current_price": float(vs.get_unit_price(i.id, "auto")[0]),
         }
         for i in top_items
     ]

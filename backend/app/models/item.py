@@ -3,7 +3,8 @@
 所有其他业务（掉落/收购/价格/维修/炼金/制造/消耗/产出/分析）都必须通过
 item_id 引用本表，禁止使用孤立的物品名称字符串。
 
-V2：一个物品可拥有多个 Role（货币/材料/装备/掉落…），价格字段统一为 Numeric。
+V3：价格不再是 Item 属性，改由 market_observations 记录（市场事件）。
+一个物品可拥有多个 Role（货币/材料/装备/掉落…）。
 """
 
 from datetime import datetime
@@ -54,11 +55,6 @@ class Item(Base, TimestampMixin):
     stack_size: Mapped[Optional[int]] = mapped_column(Integer)
     tags: Mapped[Optional[list]] = mapped_column(JSON, default=list)
 
-    # 三种价值来源（当前值，单位为基础货币=钻石；历史见 item_price_history）
-    vendor_buy_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
-    market_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
-    manual_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
-
     importance_score: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -68,10 +64,10 @@ class Item(Base, TimestampMixin):
     images: Mapped[List["ItemImage"]] = relationship(
         back_populates="item", cascade="all, delete-orphan"
     )
-    price_history: Mapped[List["ItemPriceHistory"]] = relationship(
+    market_observations: Mapped[List["MarketObservation"]] = relationship(
         back_populates="item",
         cascade="all, delete-orphan",
-        foreign_keys="ItemPriceHistory.item_id",
+        foreign_keys="MarketObservation.item_id",
     )
     relations_out: Mapped[List["ItemRelation"]] = relationship(
         back_populates="item", cascade="all, delete-orphan"
@@ -103,23 +99,6 @@ class ItemImage(Base, TimestampMixin):
     height: Mapped[Optional[int]] = mapped_column(Integer)
 
     item: Mapped["Item"] = relationship(back_populates="images")
-
-
-class ItemPriceHistory(Base, TimestampMixin):
-    __tablename__ = "item_price_history"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
-    price_type: Mapped[str] = mapped_column(String(32), nullable=False)  # vendor/market/manual
-    price: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
-    # 价格计价单位（货币面额 Item）；为空时表示基础货币（钻石）
-    currency_item_id: Mapped[Optional[int]] = mapped_column(ForeignKey("items.id"))
-    quantity: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
-    source: Mapped[Optional[str]] = mapped_column(String(64))
-    observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    notes: Mapped[Optional[str]] = mapped_column(Text)
-
-    item: Mapped["Item"] = relationship(back_populates="price_history", foreign_keys=[item_id])
 
 
 class ItemRelation(Base, TimestampMixin):

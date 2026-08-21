@@ -1,8 +1,8 @@
-"""副本系统：Dungeon / DungeonRun / Loot / Cost(Consumption) / Repair。
+"""副本系统：Dungeon / DungeonRun / Loot / Consumption / Repair。
 
-所有掉落与成本必须引用 item_id，并在发生时保存估值快照
-（unit_price + currency + base_currency_value + fiat_value），
-确保历史记录不被当前价格污染。
+V3：副本只记录「事实」（item_id + quantity + 时间），不保存估值快照与利润。
+利润由 Analysis Service 按时间动态查询 MarketObservation 历史价计算，
+这样价格体系重构后，历史副本利润始终反映当时的真实价格。
 """
 
 from datetime import datetime
@@ -49,20 +49,6 @@ class DungeonRun(Base, TimestampMixin):
     death_count: Mapped[int] = mapped_column(Integer, default=0)
     notes: Mapped[Optional[str]] = mapped_column(Text)
 
-    # 计算结果快照（单位：基础货币 = 钻石；历史稳定）
-    total_duration_minutes: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
-    gross_value: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
-    repair_cost: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
-    consumable_cost: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
-    other_cost: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
-    total_cost: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
-    net_profit: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
-    profit_per_hour: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
-    # RMB 估值（基于记录时的汇率快照，非实际可兑现价格）
-    gross_value_fiat: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
-    net_profit_fiat: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
-    profit_per_hour_fiat: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
-
     dungeon: Mapped["Dungeon"] = relationship(back_populates="runs")
     loots: Mapped[List["DungeonLoot"]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
@@ -74,6 +60,11 @@ class DungeonRun(Base, TimestampMixin):
         back_populates="run", cascade="all, delete-orphan"
     )
 
+    @property
+    def total_duration_minutes(self) -> Decimal:
+        """总时长 = 赶路 + 战斗（派生，不落库）。"""
+        return Decimal(self.travel_minutes or 0) + Decimal(self.combat_minutes or 0)
+
 
 class DungeonLoot(Base, TimestampMixin):
     __tablename__ = "dungeon_loots"
@@ -82,15 +73,6 @@ class DungeonLoot(Base, TimestampMixin):
     dungeon_run_id: Mapped[int] = mapped_column(ForeignKey("dungeon_runs.id"), index=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
-
-    # 估值快照（发生时的价格，历史不可变）
-    valuation_unit_price: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
-    valuation_total: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
-    valuation_source: Mapped[str] = mapped_column(String(32), nullable=False)
-    valuation_currency_item_id: Mapped[Optional[int]] = mapped_column(ForeignKey("items.id"))
-    base_currency_value: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
-    fiat_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
-    valuation_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
     run: Mapped["DungeonRun"] = relationship(back_populates="loots")
     item: Mapped["Item"] = relationship(foreign_keys=[item_id])
@@ -104,20 +86,12 @@ class DungeonConsumption(Base, TimestampMixin):
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
 
-    valuation_unit_price: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
-    valuation_total: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
-    valuation_source: Mapped[str] = mapped_column(String(32), nullable=False)
-    valuation_currency_item_id: Mapped[Optional[int]] = mapped_column(ForeignKey("items.id"))
-    base_currency_value: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
-    fiat_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
-    valuation_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-
     run: Mapped["DungeonRun"] = relationship(back_populates="consumptions")
     item: Mapped["Item"] = relationship(foreign_keys=[item_id])
 
 
 class DungeonRepair(Base, TimestampMixin):
-    """副本维修明细：本次维修消耗的任意 Item（材料 + 钻石 + 钻石块…）及估值快照。"""
+    """副本维修明细：本次维修消耗的任意 Item（材料 + 钻石 + 钻石块…）。"""
 
     __tablename__ = "dungeon_repairs"
 
@@ -126,12 +100,6 @@ class DungeonRepair(Base, TimestampMixin):
     equipment_id: Mapped[Optional[int]] = mapped_column(ForeignKey("equipments.id"))
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
-    valuation_unit_price: Mapped[Decimal] = mapped_column(Numeric(20, 8), nullable=False)
-    material_cost: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
-    valuation_source: Mapped[str] = mapped_column(String(32), default="vendor")
-    valuation_currency_item_id: Mapped[Optional[int]] = mapped_column(ForeignKey("items.id"))
-    base_currency_value: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
-    fiat_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 8))
 
     run: Mapped["DungeonRun"] = relationship(back_populates="repairs")
     item: Mapped["Item"] = relationship(foreign_keys=[item_id])

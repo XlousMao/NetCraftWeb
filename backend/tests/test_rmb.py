@@ -50,7 +50,6 @@ def test_rmb_value_of_diamond_amount(db, currency_setup):
 def test_rmb_uses_historical_observation(db, currency_setup):
     """RMB 汇率按 observed_at 取最近有效观察，不能用未来价格。"""
     now = datetime.now(timezone.utc)
-    # 过去：27.10，未来：30.00
     _add_rmb_observation(db, currency_setup, 99, "27.10", now - timedelta(days=3))
     _add_rmb_observation(db, currency_setup, 99, "30.00", now + timedelta(days=3))
 
@@ -64,14 +63,9 @@ def test_valuation_returns_diamond_and_rmb(db, currency_setup):
     """估值服务输出钻石 + RMB 双价值。"""
     now = datetime.now(timezone.utc)
     _add_rmb_observation(db, currency_setup, 99, "27.10", now)
-    # 钻石块单价（市场价）
-    block = currency_setup["钻石块"]
-    block.market_price = Decimal(1)  # 1 钻石块 = 1 钻石块（以自身计价）
-
-    from app.services.valuation import ValuationService
 
     vs = ValuationService(db)
-    # 直接估值「钻石」：1 钻石 = 1 钻石
+    # 钻石（基础货币）：1000 钻石 = 1000 钻石
     v = vs.value(currency_setup["钻石"].id, Decimal(1000), "auto", now)
     assert v.base_currency_value == Decimal(1000)
     assert v.fiat_value is not None
