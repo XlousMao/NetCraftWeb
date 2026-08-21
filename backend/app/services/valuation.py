@@ -15,7 +15,10 @@ from sqlalchemy.orm import Session
 from app.models.item import Item, ItemPriceHistory
 
 # 估值来源优先级（auto 策略下取第一个非空）
-AUTO_POLICY_ORDER = ("manual", "market", "vendor")
+# 说明：manual（用户手动估值）最高；vendor（商人收购价）作为稳定、保守的
+# "实际可变现价值"默认优先于 market（玩家市场价，可能波动/被操纵），
+# 这也与规格示例中"掉落价值 = 数量 × 商人收购价"的计算方式一致。
+AUTO_POLICY_ORDER = ("manual", "vendor", "market")
 
 POLICY_FIELD_MAP = {
     "vendor": "vendor_buy_price",

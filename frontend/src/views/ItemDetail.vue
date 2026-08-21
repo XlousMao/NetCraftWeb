@@ -62,6 +62,11 @@ async function recordPrice() {
 function primaryImage() {
   return item.value?.images?.find((i: any) => i.is_primary) || item.value?.images?.[0]
 }
+
+function priceTypeLabel(type: string): string {
+  const map: Record<string, string> = { vendor: '商人', market: '市场', manual: '手动' }
+  return map[type] || type
+}
 </script>
 
 <template>
@@ -152,7 +157,7 @@ function primaryImage() {
         <el-tab-pane label="历史记录" name="history">
           <el-table :data="item.price_history || []" size="small">
             <el-table-column label="类型" width="100">
-              <template #default="{ row }">{{ { vendor: '商人', market: '市场', manual: '手动' }[row.price_type] }}</template>
+              <template #default="{ row }">{{ priceTypeLabel(row.price_type) }}</template>
             </el-table-column>
             <el-table-column prop="price" label="价格" width="120" />
             <el-table-column prop="source" label="来源" />
