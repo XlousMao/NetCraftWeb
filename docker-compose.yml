@@ -7,11 +7,11 @@ services:
       POSTGRES_PASSWORD: geap
       POSTGRES_DB: geap
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U geap -d geap"]
+      test: [ "CMD-SHELL", "pg_isready -U geap -d geap" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -22,7 +22,7 @@ services:
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -30,6 +30,8 @@ services:
   backend:
     build:
       context: ./backend
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     container_name: geap-backend
     environment:
       DATABASE_URL: postgresql+psycopg://geap:geap@db:5432/geap
@@ -60,6 +62,7 @@ services:
       context: ./frontend
       args:
         VITE_API_BASE_URL: /api
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
     container_name: geap-frontend
     depends_on:
       - backend
