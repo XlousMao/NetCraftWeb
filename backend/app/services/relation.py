@@ -70,6 +70,11 @@ class RelationService:
         for o in recipe.outputs:
             self._upsert("PRODUCES", "recipe", recipe.id, o.item_id, o.quantity)
 
+    def clear_recipe_relations(self, recipe_id: int) -> None:
+        """删除配方时清理其 CONSUMES / PRODUCES 物品关系。"""
+        self._clear_source("CONSUMES", "recipe", recipe_id)
+        self._clear_source("PRODUCES", "recipe", recipe_id)
+
     def sync_equipment(self, equipment: Equipment) -> None:
         self._clear_source("REQUIRES_REPAIR", "equipment", equipment.id)
         for r in equipment.repair_requirements:

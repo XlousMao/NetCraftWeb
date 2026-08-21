@@ -100,10 +100,17 @@ async function save() {
 }
 
 async function remove(row: any) {
+  const hard = !row.is_active
   try {
-    await ElMessageBox.confirm(`确定要删除配方「${row.name}」吗？`, '警告', { type: 'warning' })
+    await ElMessageBox.confirm(
+      hard
+        ? `确定彻底删除配方「${row.name}」吗？其关联的生产记录也会一并删除，不可恢复。`
+        : `确定删除配方「${row.name}」吗？删除后可重新添加同名配方。`,
+      hard ? '彻底删除' : '删除',
+      { type: 'warning' },
+    )
     await recipeApi.remove(row.id)
-    ElMessage.success('配方已删除')
+    ElMessage.success(hard ? '配方已彻底删除' : '配方已删除')
     fetch()
   } catch {
     // 取消
@@ -141,7 +148,7 @@ async function remove(row: any) {
       <el-table-column label="操作" width="130">
         <template #default="{ row }">
           <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" text type="danger" @click="remove(row)">删除</el-button>
+          <el-button size="small" text type="danger" @click="remove(row)">{{ row.is_active ? '删除' : '彻底删除' }}</el-button>
         </template>
       </el-table-column>
     </el-table>

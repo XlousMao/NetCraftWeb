@@ -59,7 +59,11 @@ def list_recipes(include_inactive: bool = Query(False), db: Session = Depends(ge
 
 @router.post("", response_model=RecipeOut, status_code=201)
 def create_recipe(payload: RecipeCreate, db: Session = Depends(get_db)):
-    existing = db.execute(select(Recipe).where(Recipe.name == payload.name)).scalar_one_or_none()
+    existing = db.execute(
+        select(Recipe).where(
+            Recipe.name == payload.name, Recipe.is_active.is_(True)
+        )
+    ).scalar_one_or_none()
     if existing:
         raise HTTPException(409, "配方名称已存在")
     r = Recipe(
@@ -136,7 +140,21 @@ def delete_recipe(recipe_id: int, db: Session = Depends(get_db)):
     r = db.get(Recipe, recipe_id)
     if r is None:
         raise HTTPException(404, "配方不存在")
-    r.is_active = False
+    if r.is_active:
+        # 软删除：改名释放唯一名，允许重建同名配方
+        r.name = f"{r.name}__deleted_{r.id}"
+        r.is_active = False
+    else:
+        # 已停用：彻底删除（物理），清理关联生产记录、活动引用与物品关系
+        from app.services.activity import ActivityService
+        from app.services.relation import RelationService
+
+        asvc = ActivityService(db)
+        for rec in list(r.records):
+            asvc.delete_by_ref("production_record", rec.id)
+            db.delete(rec)
+        RelationService(db).clear_recipe_relations(r.id)
+        db.delete(r)
     db.commit()
     return None
 
