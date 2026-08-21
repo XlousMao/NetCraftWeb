@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { itemApi, analysisApi, currencyApi } from '@/api'
 import ImageUpload from '@/components/ImageUpload.vue'
 import RelationGraph from '@/components/RelationGraph.vue'
@@ -23,6 +23,9 @@ const marketForm = ref({
   seller_name: '',
   source: '',
 })
+
+// 正在编辑的观察记录 id（null = 新增模式）
+const editingObsId = ref<number | null>(null)
 
 // 数量快捷预设（奶块常见「一组 99」「半组 33」）
 const PRICE_PRESETS = [1, 33, 99]
@@ -88,6 +91,13 @@ const totalDiamond = computed(() => {
   return Math.round(t * 10000) / 10000
 })
 
+// 总价对应的 RMB 估值（基于当前基础货币汇率）
+const totalRmb = computed(() => {
+  const rate = currency.value?.rmb_rate
+  if (rate == null) return null
+  return totalDiamond.value * rate
+})
+
 const stars = computed(() => {
   const score = item.value?.importance_score ?? 0
   return '★'.repeat(Math.min(5, Math.max(1, Math.round(score / 20 * 5))))
@@ -117,7 +127,66 @@ const marketChart = computed(() => {
   }
 })
 
-async function recordMarket() {
+// 把总钻石数贪心分解回各面额（编辑回填用）
+function splitToDenominations(total: number): Record<string, number> {
+  const parts: Record<string, number> = {}
+  const sorted = [...denominations.value].sort((a: any, b: any) => b.base_value - a.base_value)
+  let remaining = total
+  for (const d of sorted) {
+    if (d.base_value <= 0) continue
+    const count = Math.floor(remaining / d.base_value + 1e-9)
+    parts[d.item_id] = count
+    remaining = Math.round((remaining - count * d.base_value) * 10000) / 10000
+  }
+  if (remaining > 0) {
+    const min = sorted[sorted.length - 1]
+    parts[min.item_id] = (parts[min.item_id] || 0) + remaining / min.base_value
+  }
+  return parts
+}
+
+function resetMarketForm() {
+  editingObsId.value = null
+  marketForm.value.observation_type = 'SELL_OFFER'
+  marketForm.value.quantity = 99
+  marketForm.value.seller_name = ''
+  marketForm.value.source = ''
+  const parts: Record<string, number> = {}
+  for (const d of denominations.value) parts[d.item_id] = 0
+  marketForm.value.price_parts = parts
+}
+
+function openEditObs(row: any) {
+  editingObsId.value = row.id
+  marketForm.value.observation_type = row.observation_type
+  marketForm.value.quantity = row.quantity
+  marketForm.value.seller_name = row.seller_name || ''
+  marketForm.value.source = row.source || ''
+  marketForm.value.price_parts = splitToDenominations(row.price_quantity)
+}
+
+function cancelEdit() {
+  resetMarketForm()
+}
+
+async function removeObs(row: any) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除这条「${OBS_TYPE_LABEL[row.observation_type] || row.observation_type}」记录吗？`,
+      '删除确认',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  await itemApi.removeMarket(itemId, row.id)
+  ElMessage.success('已删除')
+  if (editingObsId.value === row.id) resetMarketForm()
+  fetchItem()
+  fetchDecision()
+}
+
+async function saveMarket() {
   if (!marketForm.value.quantity || marketForm.value.quantity <= 0) {
     ElMessage.warning('请输入数量')
     return
@@ -127,20 +196,22 @@ async function recordMarket() {
     return
   }
   const baseId = currency.value?.system?.base_currency_item_id ?? null
-  await itemApi.recordMarket(itemId, {
+  const payload = {
     observation_type: marketForm.value.observation_type,
     quantity: marketForm.value.quantity,
     price_item_id: baseId,
     price_quantity: totalDiamond.value,
     seller_name: marketForm.value.seller_name,
     source: marketForm.value.source,
-  })
-  ElMessage.success('市场观察已记录')
-  for (const k of Object.keys(marketForm.value.price_parts)) {
-    marketForm.value.price_parts[k] = 0
   }
-  marketForm.value.seller_name = ''
-  marketForm.value.source = ''
+  if (editingObsId.value) {
+    await itemApi.updateMarket(itemId, editingObsId.value, payload)
+    ElMessage.success('市场观察已更新')
+  } else {
+    await itemApi.recordMarket(itemId, payload)
+    ElMessage.success('市场观察已记录')
+  }
+  resetMarketForm()
   fetchItem()
   fetchDecision()
 }
@@ -228,11 +299,14 @@ function summary() {
               <span class="unit">{{ d.item_name }}</span>
             </template>
             <span class="total">= {{ totalDiamond }} 钻石</span>
+            <span v-if="totalRmb != null" class="rmb">≈ {{ totalRmb.toFixed(3) }} RMB</span>
           </div>
           <div class="market-form">
             <el-input v-model="marketForm.seller_name" placeholder="卖家/地点（可选）" style="width: 180px" />
             <el-input v-model="marketForm.source" placeholder="来源（可选）" style="width: 140px" />
-            <el-button type="primary" @click="recordMarket">记录</el-button>
+            <el-tag v-if="editingObsId" type="warning" effect="plain">正在编辑记录 #{{ editingObsId }}</el-tag>
+            <el-button type="primary" @click="saveMarket">{{ editingObsId ? '保存修改' : '记录' }}</el-button>
+            <el-button v-if="editingObsId" @click="cancelEdit">取消</el-button>
           </div>
           <Chart v-if="item.price_history?.length" :option="marketChart" height="280px" />
           <el-empty v-else description="暂无价格历史" />
@@ -250,6 +324,12 @@ function summary() {
             <el-table-column prop="source" label="来源" />
             <el-table-column label="时间" width="180">
               <template #default="{ row }">{{ new Date(row.observed_at).toLocaleString() }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="140" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" text type="primary" @click="openEditObs(row)">编辑</el-button>
+                <el-button size="small" text type="danger" @click="removeObs(row)">删除</el-button>
+              </template>
             </el-table-column>
           </el-table>
         </el-tab-pane>
@@ -395,6 +475,10 @@ function summary() {
   font-weight: 600;
   font-size: 14px;
   margin-left: 4px;
+}
+.market-form .rmb {
+  color: #67c23a;
+  font-size: 13px;
 }
 .market-form .preset {
   cursor: pointer;

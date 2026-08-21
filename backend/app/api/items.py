@@ -21,6 +21,7 @@ from app.schemas.item import (
     ItemUpdate,
     MarketObservationCreate,
     MarketObservationOut,
+    MarketObservationUpdate,
 )
 from app.services.image import ImageService
 from app.services.valuation import ValuationService
@@ -241,6 +242,29 @@ def record_market(item_id: int, payload: MarketObservationCreate, db: Session = 
     db.commit()
     db.refresh(obs)
     return MarketObservationOut.model_validate(obs)
+
+
+@router.patch("/{item_id}/market/{obs_id}", response_model=MarketObservationOut)
+def update_market(item_id: int, obs_id: int, payload: MarketObservationUpdate, db: Session = Depends(get_db)):
+    obs = db.get(MarketObservation, obs_id)
+    if obs is None or obs.item_id != item_id:
+        raise HTTPException(404, "市场观察不存在")
+    data = payload.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(obs, k, v)
+    db.commit()
+    db.refresh(obs)
+    return MarketObservationOut.model_validate(obs)
+
+
+@router.delete("/{item_id}/market/{obs_id}", status_code=204)
+def delete_market(item_id: int, obs_id: int, db: Session = Depends(get_db)):
+    obs = db.get(MarketObservation, obs_id)
+    if obs is None or obs.item_id != item_id:
+        raise HTTPException(404, "市场观察不存在")
+    db.delete(obs)
+    db.commit()
+    return None
 
 
 @router.get("/{item_id}/market/summary", response_model=dict)

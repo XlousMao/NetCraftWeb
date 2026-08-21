@@ -80,6 +80,18 @@ class MarketObservationCreate(BaseModel):
     note: Optional[str] = None
 
 
+class MarketObservationUpdate(BaseModel):
+    observation_type: Optional[str] = None
+    quantity: Optional[float] = Field(None, gt=0)
+    price_item_id: Optional[int] = None
+    price_quantity: Optional[float] = Field(None, gt=0)
+    seller_name: Optional[str] = None
+    location: Optional[str] = None
+    source: Optional[str] = None
+    observed_at: Optional[datetime] = None
+    note: Optional[str] = None
+
+
 class MarketObservationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -18,6 +18,9 @@ export const itemApi = {
     }),
   listMarket: (id: number) => client.get(`/items/${id}/market`),
   recordMarket: (id: number, data: any) => client.post(`/items/${id}/market`, data),
+  updateMarket: (id: number, obsId: number, data: any) =>
+    client.patch(`/items/${id}/market/${obsId}`, data),
+  removeMarket: (id: number, obsId: number) => client.delete(`/items/${id}/market/${obsId}`),
   marketSummary: (id: number) => client.get(`/items/${id}/market/summary`),
   relationGraph: (id: number, depth = 2) =>
     client.get(`/items/${id}/relation-graph`, { params: { depth } }),
