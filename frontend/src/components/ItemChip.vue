@@ -1,10 +1,17 @@
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   name: string
   quantity?: number | string | null
   iconUrl?: string | null
   type?: string
+  closable?: boolean
 }>()
+const emit = defineEmits<{ close: [] }>()
+
+function onClose(e: Event) {
+  e.stopPropagation()
+  emit('close')
+}
 </script>
 
 <template>
@@ -15,6 +22,7 @@ defineProps<{
     </div>
     <span class="chip-name">{{ name }}</span>
     <span v-if="quantity != null && quantity !== ''" class="chip-qty">×{{ quantity }}</span>
+    <span v-if="closable" class="chip-close" @click="onClose">×</span>
   </div>
 </template>
 
@@ -57,6 +65,18 @@ defineProps<{
 .chip-qty {
   color: #909399;
   font-weight: 600;
+}
+.chip-close {
+  cursor: pointer;
+  color: #c0c4cc;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 50%;
+}
+.chip-close:hover {
+  color: #f56c6c;
+  background: #fef0f0;
 }
 .item-chip.success {
   background: #f0f9eb;

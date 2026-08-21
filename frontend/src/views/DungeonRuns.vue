@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { dungeonRunApi, dungeonApi, itemApi, equipmentApi } from '@/api'
+import ItemChip from '@/components/ItemChip.vue'
 
 const runs = ref<any[]>([])
 const dungeons = ref<any[]>([])
@@ -29,10 +30,45 @@ const form = ref<any>({
 const currentLoot = ref({ item_id: null, quantity: 1 })
 const currentConsumption = ref({ item_id: null, quantity: 1 })
 const currentRepair = ref({ equipment_id: null })
+const lootQtyInput = ref('1')
+const consQtyInput = ref('1')
 
 const dialogTitle = computed(() => (editingId.value ? '编辑副本记录' : '新增副本记录'))
 // 编辑时需能选中当前记录所属副本（可能已停用），故显示全部；新建时只显示启用副本
 const dungeonOptions = computed(() => (editingId.value ? dungeons.value : activeDungeons.value))
+
+// 简单四则运算：只允许数字、运算符、括号、小数点，安全计算
+function calcExpr(expr: string): number | null {
+  const cleaned = expr.replace(/[^0-9+\-*/().\s]/g, '')
+  if (!cleaned.trim()) return null
+  try {
+    // eslint-disable-next-line no-new-func
+    const result = new Function(`"use strict"; return (${cleaned})`)()
+    return typeof result === 'number' && Number.isFinite(result) ? result : null
+  } catch {
+    return null
+  }
+}
+
+function commitLootQty() {
+  const v = calcExpr(lootQtyInput.value)
+  if (v != null && v > 0) {
+    currentLoot.value.quantity = v
+    lootQtyInput.value = String(v)
+  } else {
+    lootQtyInput.value = String(currentLoot.value.quantity)
+  }
+}
+
+function commitConsQty() {
+  const v = calcExpr(consQtyInput.value)
+  if (v != null && v > 0) {
+    currentConsumption.value.quantity = v
+    consQtyInput.value = String(v)
+  } else {
+    consQtyInput.value = String(currentConsumption.value.quantity)
+  }
+}
 
 async function fetch() {
   loading.value = true
@@ -59,14 +95,18 @@ onMounted(async () => {
 
 function addLoot() {
   if (!currentLoot.value.item_id) return
-  form.value.loots.push({ ...currentLoot.value })
+  commitLootQty()
+  form.value.loots.push({ item_id: currentLoot.value.item_id, quantity: currentLoot.value.quantity })
   currentLoot.value = { item_id: null, quantity: 1 }
+  lootQtyInput.value = '1'
 }
 
 function addConsumption() {
   if (!currentConsumption.value.item_id) return
-  form.value.consumptions.push({ ...currentConsumption.value })
+  commitConsQty()
+  form.value.consumptions.push({ item_id: currentConsumption.value.item_id, quantity: currentConsumption.value.quantity })
   currentConsumption.value = { item_id: null, quantity: 1 }
+  consQtyInput.value = '1'
 }
 
 function addRepair() {
@@ -77,6 +117,10 @@ function addRepair() {
 
 function itemName(id: number) {
   return items.value.find((i) => i.id === id)?.name || `#${id}`
+}
+
+function itemIcon(id: number) {
+  return items.value.find((i) => i.id === id)?.icon_url || null
 }
 
 function resetForm() {
@@ -201,7 +245,7 @@ async function remove(row: any) {
     />
 
     <!-- 新增 / 编辑副本记录 -->
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="720px" top="4vh">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="760px" top="4vh">
       <el-form label-width="90px">
         <el-row :gutter="12">
           <el-col :span="12">
@@ -236,26 +280,54 @@ async function remove(row: any) {
         <el-divider content-position="left">掉落</el-divider>
         <div class="add-row">
           <el-select v-model="currentLoot.item_id" filterable placeholder="搜索物品" style="flex: 1">
-            <el-option v-for="i in items" :key="i.id" :label="i.name" :value="i.id" />
+            <el-option v-for="i in items" :key="i.id" :label="i.name" :value="i.id">
+              <div class="option-item">
+                <img v-if="i.icon_url" :src="i.icon_url" class="option-img" />
+                <span v-else class="option-ph">{{ i.name.slice(0, 1) }}</span>
+                <span class="option-name">{{ i.name }}</span>
+              </div>
+            </el-option>
           </el-select>
-          <el-input-number v-model="currentLoot.quantity" :min="1" />
+          <el-input v-model="lootQtyInput" placeholder="数量，支持 3+2、5*3" style="width: 160px" @blur="commitLootQty" @keyup.enter="commitLootQty" />
           <el-button type="primary" @click="addLoot">添加</el-button>
         </div>
-        <el-tag v-for="(l, idx) in form.loots" :key="idx" closable @close="form.loots.splice(idx, 1)" style="margin: 4px">
-          {{ itemName(l.item_id) }} ×{{ l.quantity }}
-        </el-tag>
+        <div class="chips">
+          <ItemChip
+            v-for="(l, idx) in form.loots"
+            :key="idx"
+            :name="itemName(l.item_id)"
+            :quantity="l.quantity"
+            :icon-url="itemIcon(l.item_id)"
+            closable
+            @close="form.loots.splice(idx, 1)"
+          />
+        </div>
 
         <el-divider content-position="left">消耗品</el-divider>
         <div class="add-row">
           <el-select v-model="currentConsumption.item_id" filterable placeholder="搜索物品" style="flex: 1">
-            <el-option v-for="i in items" :key="i.id" :label="i.name" :value="i.id" />
+            <el-option v-for="i in items" :key="i.id" :label="i.name" :value="i.id">
+              <div class="option-item">
+                <img v-if="i.icon_url" :src="i.icon_url" class="option-img" />
+                <span v-else class="option-ph">{{ i.name.slice(0, 1) }}</span>
+                <span class="option-name">{{ i.name }}</span>
+              </div>
+            </el-option>
           </el-select>
-          <el-input-number v-model="currentConsumption.quantity" :min="1" />
+          <el-input v-model="consQtyInput" placeholder="数量，支持 3+2" style="width: 160px" @blur="commitConsQty" @keyup.enter="commitConsQty" />
           <el-button type="primary" @click="addConsumption">添加</el-button>
         </div>
-        <el-tag v-for="(c, idx) in form.consumptions" :key="idx" closable @close="form.consumptions.splice(idx, 1)" style="margin: 4px">
-          {{ itemName(c.item_id) }} ×{{ c.quantity }}
-        </el-tag>
+        <div class="chips">
+          <ItemChip
+            v-for="(c, idx) in form.consumptions"
+            :key="idx"
+            :name="itemName(c.item_id)"
+            :quantity="c.quantity"
+            :icon-url="itemIcon(c.item_id)"
+            closable
+            @close="form.consumptions.splice(idx, 1)"
+          />
+        </div>
 
         <el-divider content-position="left">维修</el-divider>
         <div class="add-row">
@@ -285,6 +357,40 @@ async function remove(row: any) {
   display: flex;
   gap: 8px;
   margin-bottom: 8px;
+  align-items: center;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-height: 30px;
+}
+.option-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.option-img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #f5f6f7;
+}
+.option-ph {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: #f5f6f7;
+  color: #c0c4cc;
+  font-size: 12px;
+  font-weight: 600;
+}
+.option-name {
+  font-size: 13px;
 }
 .loot-imgs {
   display: flex;
