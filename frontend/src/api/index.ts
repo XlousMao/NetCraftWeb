@@ -36,6 +36,7 @@ export const dungeonRunApi = {
   list: (params: any) => client.get('/dungeon-runs', { params }),
   create: (data: any) => client.post('/dungeon-runs', data),
   get: (id: number) => client.get(`/dungeon-runs/${id}`),
+  update: (id: number, data: any) => client.put(`/dungeon-runs/${id}`, data),
   remove: (id: number) => client.delete(`/dungeon-runs/${id}`),
 }
 

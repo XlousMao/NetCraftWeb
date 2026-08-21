@@ -77,6 +77,7 @@ class LootOut(BaseModel):
     dungeon_run_id: int
     item_id: int
     item_name: Optional[str] = None
+    icon_url: Optional[str] = None
     quantity: float
     valuation_unit_price: float
     valuation_total: float
@@ -94,6 +95,7 @@ class ConsumptionOut(BaseModel):
     dungeon_run_id: int
     item_id: int
     item_name: Optional[str] = None
+    icon_url: Optional[str] = None
     quantity: float
     valuation_unit_price: float
     valuation_total: float
@@ -102,6 +104,18 @@ class ConsumptionOut(BaseModel):
     base_currency_value: float
     fiat_value: Optional[float] = None
     valuation_time: datetime
+
+
+class RepairOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    dungeon_run_id: int
+    equipment_id: Optional[int] = None
+    item_id: int
+    item_name: Optional[str] = None
+    quantity: float
+    base_currency_value: float
 
 
 class DungeonRunOut(BaseModel):
@@ -130,3 +144,4 @@ class DungeonRunOut(BaseModel):
     created_at: datetime
     loots: List[LootOut] = Field(default_factory=list)
     consumptions: List[ConsumptionOut] = Field(default_factory=list)
+    repairs: List[RepairOut] = Field(default_factory=list)

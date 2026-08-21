@@ -13,6 +13,7 @@ const page = ref(1)
 const loading = ref(false)
 
 const dialogVisible = ref(false)
+const editingId = ref<number | null>(null)
 const form = ref<any>({
   dungeon_id: null,
   started_at: new Date(),
@@ -29,6 +30,10 @@ const currentLoot = ref({ item_id: null, quantity: 1 })
 const currentConsumption = ref({ item_id: null, quantity: 1 })
 const currentRepair = ref({ equipment_id: null })
 
+const dialogTitle = computed(() => (editingId.value ? '编辑副本记录' : '新增副本记录'))
+// 编辑时需能选中当前记录所属副本（可能已停用），故显示全部；新建时只显示启用副本
+const dungeonOptions = computed(() => (editingId.value ? dungeons.value : activeDungeons.value))
+
 async function fetch() {
   loading.value = true
   try {
@@ -42,7 +47,11 @@ async function fetch() {
 
 onMounted(async () => {
   fetch()
-  const [d, i, e] = await Promise.all([dungeonApi.list(), itemApi.list({ page_size: 100 }), equipmentApi.list()])
+  const [d, i, e] = await Promise.all([
+    dungeonApi.list(true),
+    itemApi.list({ page_size: 100 }),
+    equipmentApi.list(),
+  ])
   dungeons.value = d.data.items
   items.value = i.data.items
   equipments.value = e.data.items
@@ -70,23 +79,8 @@ function itemName(id: number) {
   return items.value.find((i) => i.id === id)?.name || `#${id}`
 }
 
-async function submit() {
-  if (!form.value.dungeon_id) {
-    ElMessage.warning('请选择副本')
-    return
-  }
-  const payload = {
-    ...form.value,
-    started_at: new Date(form.value.started_at).toISOString(),
-  }
-  const { data } = await dungeonRunApi.create(payload)
-  ElMessage.success(`本次净利润 ${data.net_profit.toLocaleString()} 金币`)
-  dialogVisible.value = false
-  resetForm()
-  fetch()
-}
-
 function resetForm() {
+  editingId.value = null
   form.value = {
     dungeon_id: null,
     started_at: new Date(),
@@ -99,6 +93,54 @@ function resetForm() {
     repairs: [],
   }
 }
+
+function openCreate() {
+  resetForm()
+  dialogVisible.value = true
+}
+
+function openEdit(row: any) {
+  editingId.value = row.id
+  form.value = {
+    dungeon_id: row.dungeon_id,
+    started_at: new Date(row.started_at),
+    travel_minutes: row.travel_minutes,
+    combat_minutes: row.combat_minutes,
+    death_count: row.death_count,
+    other_cost: row.other_cost,
+    loots: (row.loots || []).map((l: any) => ({ item_id: l.item_id, quantity: l.quantity })),
+    consumptions: (row.consumptions || []).map((c: any) => ({ item_id: c.item_id, quantity: c.quantity })),
+    repairs: (row.repairs || []).map((r: any) => ({ item_id: r.item_id, quantity: r.quantity })),
+  }
+  dialogVisible.value = true
+}
+
+async function submit() {
+  if (!form.value.dungeon_id) {
+    ElMessage.warning('请选择副本')
+    return
+  }
+  const payload = {
+    ...form.value,
+    started_at: new Date(form.value.started_at).toISOString(),
+  }
+  if (editingId.value) {
+    const { data } = await dungeonRunApi.update(editingId.value, payload)
+    ElMessage.success(`已更新，净利润 ${data.net_profit.toLocaleString()} 钻石`)
+  } else {
+    const { data } = await dungeonRunApi.create(payload)
+    ElMessage.success(`本次净利润 ${data.net_profit.toLocaleString()} 钻石`)
+  }
+  dialogVisible.value = false
+  resetForm()
+  fetch()
+}
+
+async function remove(row: any) {
+  await dungeonRunApi.remove(row.id)
+  ElMessage.success('副本记录已删除')
+  fetch()
+}
 </script>
 
 <template>
@@ -106,12 +148,27 @@ function resetForm() {
     <div class="toolbar">
       <h2 style="margin: 0">副本记录</h2>
       <div style="flex: 1"></div>
-      <el-button type="primary" @click="dialogVisible = true">新增副本记录</el-button>
+      <el-button type="primary" @click="openCreate">新增副本记录</el-button>
     </div>
 
     <el-table :data="runs" v-loading="loading" style="margin-top: 16px">
-      <el-table-column prop="dungeon_name" label="副本" />
-      <el-table-column label="时间" width="180">
+      <el-table-column prop="dungeon_name" label="副本" width="120" />
+      <el-table-column label="掉落物" min-width="200">
+        <template #default="{ row }">
+          <div class="loot-imgs">
+            <el-tooltip v-for="l in (row.loots || []).slice(0, 5)" :key="l.id" :content="`${l.item_name} ×${l.quantity}`" placement="top">
+              <div class="loot-img-wrap">
+                <img v-if="l.icon_url" :src="l.icon_url" class="loot-img" />
+                <span v-else class="loot-ph">{{ (l.item_name || '?').slice(0, 1) }}</span>
+                <span class="loot-qty">×{{ l.quantity }}</span>
+              </div>
+            </el-tooltip>
+            <el-tag v-if="(row.loots || []).length > 5" size="small" type="info">+{{ row.loots.length - 5 }}</el-tag>
+            <span v-if="!row.loots || row.loots.length === 0" class="text-muted">无</span>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="时间" width="160">
         <template #default="{ row }">{{ new Date(row.started_at).toLocaleString() }}</template>
       </el-table-column>
       <el-table-column prop="gross_value" label="掉落价值(钻石)" width="120" />
@@ -125,9 +182,10 @@ function resetForm() {
         </template>
       </el-table-column>
       <el-table-column prop="profit_per_hour" label="钻石/小时" width="110" />
-      <el-table-column label="操作" width="100">
+      <el-table-column label="操作" width="130">
         <template #default="{ row }">
-          <el-button size="small" text type="danger" @click="dungeonRunApi.remove(row.id).then(fetch)">删除</el-button>
+          <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button size="small" text type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -142,14 +200,14 @@ function resetForm() {
       @current-change="(p: number) => { page = p; fetch() }"
     />
 
-    <!-- 新增副本记录 -->
-    <el-dialog v-model="dialogVisible" title="新增副本记录" width="720px" top="4vh">
+    <!-- 新增 / 编辑副本记录 -->
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="720px" top="4vh">
       <el-form label-width="90px">
         <el-row :gutter="12">
           <el-col :span="12">
             <el-form-item label="副本" required>
               <el-select v-model="form.dungeon_id" style="width: 100%">
-                <el-option v-for="d in activeDungeons" :key="d.id" :label="d.name" :value="d.id" />
+                <el-option v-for="d in dungeonOptions" :key="d.id" :label="d.name" :value="d.id" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -207,7 +265,7 @@ function resetForm() {
           <el-button type="primary" @click="addRepair">添加</el-button>
         </div>
         <el-tag v-for="(r, idx) in form.repairs" :key="idx" closable @close="form.repairs.splice(idx, 1)" style="margin: 4px">
-          维修：{{ equipments.find((e) => e.id === r.equipment_id)?.name }}
+          维修：{{ r.equipment_id ? (equipments.find((e) => e.id === r.equipment_id)?.name) : itemName(r.item_id) + ' ×' + r.quantity }}
         </el-tag>
       </el-form>
       <template #footer>
@@ -227,5 +285,47 @@ function resetForm() {
   display: flex;
   gap: 8px;
   margin-bottom: 8px;
+}
+.loot-imgs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.loot-img-wrap {
+  position: relative;
+  width: 40px;
+  height: 40px;
+}
+.loot-img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  border: 1px solid #eef0f3;
+  border-radius: 6px;
+  background: #f7f8fa;
+}
+.loot-ph {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #eef0f3;
+  border-radius: 6px;
+  background: #f7f8fa;
+  color: #c0c4cc;
+  font-weight: 600;
+}
+.loot-qty {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  font-size: 10px;
+  background: #3b82f6;
+  color: #fff;
+  border-radius: 8px;
+  padding: 0 4px;
+  line-height: 14px;
 }
 </style>

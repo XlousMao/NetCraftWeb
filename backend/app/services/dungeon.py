@@ -1,4 +1,4 @@
-"""副本服务：创建副本记录并在事务内完成掉落/消耗/维修的估值与收益计算。
+"""副本服务：创建/更新副本记录并在事务内完成掉落/消耗/维修的估值与收益计算。
 
 V2 关键：
   - 所有掉落/消耗/维修保存估值快照（unit_price + currency + base_currency_value + fiat_value）。
@@ -46,8 +46,6 @@ class DungeonService:
 
     def create_run(self, payload: DungeonRunCreate) -> DungeonRun:
         """创建副本记录（事务由调用方保证）。"""
-        now = datetime.now(timezone.utc)
-
         run = DungeonRun(
             dungeon_id=payload.dungeon_id,
             started_at=payload.started_at,
@@ -59,6 +57,44 @@ class DungeonService:
         )
         self.db.add(run)
         self.db.flush()  # 取得 run.id
+
+        self._apply_details(run, payload)
+        self.db.flush()
+        self.activity.sync_dungeon_run(run)
+        return run
+
+    def update_run(self, run_id: int, payload: DungeonRunCreate) -> DungeonRun:
+        """更新副本记录：删除旧明细，按新数据重新估值。"""
+        run = self.db.get(DungeonRun, run_id)
+        if run is None:
+            raise ValueError(f"副本记录 {run_id} 不存在")
+
+        # 更新基本字段
+        run.dungeon_id = payload.dungeon_id
+        run.started_at = payload.started_at
+        run.ended_at = payload.ended_at
+        run.travel_minutes = Decimal(payload.travel_minutes)
+        run.combat_minutes = Decimal(payload.combat_minutes)
+        run.death_count = payload.death_count
+        run.notes = payload.notes
+
+        # 删除旧明细
+        for l in list(run.loots):
+            self.db.delete(l)
+        for c in list(run.consumptions):
+            self.db.delete(c)
+        for r in list(run.repairs):
+            self.db.delete(r)
+        self.db.flush()
+
+        self._apply_details(run, payload)
+        self.db.flush()
+        self.activity.sync_dungeon_run(run)
+        return run
+
+    def _apply_details(self, run: DungeonRun, payload: DungeonRunCreate) -> None:
+        """对 run 应用掉落/消耗/维修并计算收益快照（复用，供创建与更新调用）。"""
+        now = datetime.now(timezone.utc)
 
         # 1. 掉落估值
         gross_value = Decimal(0)
@@ -139,6 +175,9 @@ class DungeonService:
         run.ended_at = run.ended_at or now
 
         # RMB 估值快照
+        run.gross_value_fiat = None
+        run.net_profit_fiat = None
+        run.profit_per_hour_fiat = None
         if has_fiat:
             total_fiat = gross_fiat - (consumable_fiat + repair_fiat)
             run.gross_value_fiat = q_money(gross_fiat)
@@ -146,13 +185,6 @@ class DungeonService:
             run.profit_per_hour_fiat = calculate_profit_per_hour(
                 total_fiat, run.total_duration_minutes
             )
-
-        self.db.flush()
-
-        # 同步活动账本
-        self.activity.sync_dungeon_run(run)
-
-        return run
 
     def _apply_repair(
         self, run: DungeonRun, repair: RepairLineCreate

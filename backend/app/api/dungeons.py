@@ -80,22 +80,30 @@ def delete_dungeon(dungeon_id: int, db: Session = Depends(get_db)):
 # ---- Dungeon Run ----
 
 def _run_out(db: Session, run: DungeonRun) -> DungeonRunOut:
-    from app.schemas.dungeon import ConsumptionOut, LootOut
+    from app.schemas.dungeon import ConsumptionOut, LootOut, RepairOut
 
     loots = []
     for l in run.loots:
         lo = LootOut.model_validate(l)
         lo.item_name = l.item.name if l.item else None
+        lo.icon_url = l.item.icon_url if l.item else None
         loots.append(lo)
     consumptions = []
     for c in run.consumptions:
         co = ConsumptionOut.model_validate(c)
         co.item_name = c.item.name if c.item else None
+        co.icon_url = c.item.icon_url if c.item else None
         consumptions.append(co)
+    repairs = []
+    for r in run.repairs:
+        ro = RepairOut.model_validate(r)
+        ro.item_name = r.item.name if r.item else None
+        repairs.append(ro)
     out = DungeonRunOut.model_validate(run)
     out.dungeon_name = run.dungeon.name if run.dungeon else None
     out.loots = loots
     out.consumptions = consumptions
+    out.repairs = repairs
     return out
 
 
@@ -142,6 +150,25 @@ def get_run(run_id: int, db: Session = Depends(get_db)):
     if run is None:
         raise HTTPException(404, "副本记录不存在")
     return _run_out(db, run)
+
+
+@run_router.put("/{run_id}", response_model=DungeonRunOut)
+def update_run(run_id: int, payload: DungeonRunCreate, db: Session = Depends(get_db)):
+    """更新副本记录：按新数据重算掉落/消耗/维修与收益。"""
+    d = db.get(Dungeon, payload.dungeon_id)
+    if d is None:
+        raise HTTPException(404, "副本不存在")
+    try:
+        run = DungeonService(db).update_run(run_id, payload)
+        from app.services.relation import RelationService
+
+        RelationService(db).sync_dungeon_run_drops(run)
+        db.commit()
+        db.refresh(run)
+        return _run_out(db, run)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc))
 
 
 @run_router.delete("/{run_id}", status_code=204)
