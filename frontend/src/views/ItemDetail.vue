@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { itemApi, analysisApi } from '@/api'
+import { itemApi, analysisApi, currencyApi } from '@/api'
 import ImageUpload from '@/components/ImageUpload.vue'
 import RelationGraph from '@/components/RelationGraph.vue'
 import Chart from '@/components/Chart.vue'
@@ -14,13 +14,18 @@ const graph = ref<any>(null)
 const activeTab = ref('overview')
 const craftDecision = ref<any>(null)
 
+const currency = ref<any>(null)
+
 const marketForm = ref({
   observation_type: 'SELL_OFFER',
-  price_quantity: null as number | null,
-  quantity: 1,
+  quantity: 99,
+  price_parts: {} as Record<string, number>,
   seller_name: '',
   source: '',
 })
+
+// 数量快捷预设（奶块常见「一组 99」「半组 33」）
+const PRICE_PRESETS = [1, 33, 99]
 
 const OBS_TYPE_LABEL: Record<string, string> = {
   SELL_OFFER: '出售挂单',
@@ -33,6 +38,7 @@ onMounted(async () => {
   await fetchItem()
   await fetchGraph()
   await fetchDecision()
+  await fetchCurrency()
 })
 
 async function fetchItem() {
@@ -49,6 +55,38 @@ async function fetchDecision() {
   const { data } = await analysisApi.craftVsBuy(itemId)
   craftDecision.value = data
 }
+
+async function fetchCurrency() {
+  try {
+    const { data } = await currencyApi.summary()
+    currency.value = data
+    const parts: Record<string, number> = {}
+    for (const d of data.denominations || []) {
+      parts[d.item_id] = 0
+    }
+    marketForm.value.price_parts = parts
+  } catch {
+    /* 货币体系未配置时降级为单一钻石 */
+  }
+}
+
+// 货币面额（按基础价值升序：钻石 → 钻石块 → 钻石结晶）
+const denominations = computed(() => {
+  const ds = currency.value?.denominations || []
+  if (ds.length === 0) {
+    return [{ item_id: 0, item_name: '钻石', base_value: 1, is_base: true }]
+  }
+  return [...ds].sort((a: any, b: any) => a.base_value - b.base_value)
+})
+
+// 换算后的总价（钻石）
+const totalDiamond = computed(() => {
+  let t = 0
+  for (const d of denominations.value) {
+    t += (marketForm.value.price_parts[d.item_id] || 0) * d.base_value
+  }
+  return Math.round(t * 10000) / 10000
+})
 
 const stars = computed(() => {
   const score = item.value?.importance_score ?? 0
@@ -80,13 +118,27 @@ const marketChart = computed(() => {
 })
 
 async function recordMarket() {
-  if (!marketForm.value.price_quantity) {
-    ElMessage.warning('请输入价格')
+  if (!marketForm.value.quantity || marketForm.value.quantity <= 0) {
+    ElMessage.warning('请输入数量')
     return
   }
-  await itemApi.recordMarket(itemId, marketForm.value)
+  if (totalDiamond.value <= 0) {
+    ElMessage.warning('请填写价格（钻石 / 钻石块 / 钻石结晶至少一项 > 0）')
+    return
+  }
+  const baseId = currency.value?.system?.base_currency_item_id ?? null
+  await itemApi.recordMarket(itemId, {
+    observation_type: marketForm.value.observation_type,
+    quantity: marketForm.value.quantity,
+    price_item_id: baseId,
+    price_quantity: totalDiamond.value,
+    seller_name: marketForm.value.seller_name,
+    source: marketForm.value.source,
+  })
   ElMessage.success('市场观察已记录')
-  marketForm.value.price_quantity = null
+  for (const k of Object.keys(marketForm.value.price_parts)) {
+    marketForm.value.price_parts[k] = 0
+  }
   marketForm.value.seller_name = ''
   marketForm.value.source = ''
   fetchItem()
@@ -143,17 +195,43 @@ function summary() {
 
         <el-tab-pane label="市场观察" name="market">
           <div class="market-form">
-            <el-select v-model="marketForm.observation_type" style="width: 130px">
-              <el-option label="出售挂单" value="SELL_OFFER" />
-              <el-option label="收购订单" value="BUY_ORDER" />
-              <el-option label="商人定价" value="NPC_PRICE" />
-              <el-option label="手动估值" value="MANUAL_ESTIMATE" />
-            </el-select>
-            <el-input-number v-model="marketForm.price_quantity" :min="0" placeholder="价格(钻石)" />
-            <span>换</span>
-            <el-input-number v-model="marketForm.quantity" :min="1" />
-            <span>个</span>
-            <el-input v-model="marketForm.seller_name" placeholder="卖家/地点（可选）" style="width: 150px" />
+            <el-radio-group v-model="marketForm.observation_type">
+              <el-radio-button value="SELL_OFFER">出售挂单</el-radio-button>
+              <el-radio-button value="BUY_ORDER">收购订单</el-radio-button>
+              <el-radio-button value="NPC_PRICE">商人定价</el-radio-button>
+              <el-radio-button value="MANUAL_ESTIMATE">手动估值</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div class="market-form">
+            <span class="lbl">数量</span>
+            <el-input-number v-model="marketForm.quantity" :min="1" :step="1" controls-position="right" />
+            <el-tag
+              v-for="p in PRICE_PRESETS"
+              :key="p"
+              class="preset"
+              :type="marketForm.quantity === p ? 'primary' : 'info'"
+              effect="plain"
+              @click="marketForm.quantity = p"
+            >{{ p }}</el-tag>
+            <span class="lbl">个</span>
+          </div>
+          <div class="market-form">
+            <span class="lbl">价格</span>
+            <template v-for="d in denominations" :key="d.item_id">
+              <el-input-number
+                v-model="marketForm.price_parts[d.item_id]"
+                :min="0"
+                :step="1"
+                controls-position="right"
+                style="width: 110px"
+              />
+              <span class="unit">{{ d.item_name }}</span>
+            </template>
+            <span class="total">= {{ totalDiamond }} 钻石</span>
+          </div>
+          <div class="market-form">
+            <el-input v-model="marketForm.seller_name" placeholder="卖家/地点（可选）" style="width: 180px" />
+            <el-input v-model="marketForm.source" placeholder="来源（可选）" style="width: 140px" />
             <el-button type="primary" @click="recordMarket">记录</el-button>
           </div>
           <Chart v-if="item.price_history?.length" :option="marketChart" height="280px" />
@@ -162,8 +240,11 @@ function summary() {
             <el-table-column label="类型" width="110">
               <template #default="{ row }">{{ OBS_TYPE_LABEL[row.observation_type] || row.observation_type }}</template>
             </el-table-column>
-            <el-table-column label="单价" width="100">
-              <template #default="{ row }">{{ row.price_quantity }} / {{ row.quantity }}</template>
+            <el-table-column label="总价(钻石)" width="110">
+              <template #default="{ row }">{{ row.price_quantity }}</template>
+            </el-table-column>
+            <el-table-column label="单价(钻石/个)" width="120">
+              <template #default="{ row }">{{ (row.price_quantity / row.quantity).toFixed(4) }}</template>
             </el-table-column>
             <el-table-column prop="seller_name" label="卖家/地点" width="120" />
             <el-table-column prop="source" label="来源" />
@@ -299,6 +380,25 @@ function summary() {
   align-items: center;
   margin-bottom: 16px;
   flex-wrap: wrap;
+}
+.market-form .lbl {
+  color: #606266;
+  font-size: 13px;
+}
+.market-form .unit {
+  color: #909399;
+  font-size: 13px;
+  margin-right: 6px;
+}
+.market-form .total {
+  color: #e6a23c;
+  font-weight: 600;
+  font-size: 14px;
+  margin-left: 4px;
+}
+.market-form .preset {
+  cursor: pointer;
+  user-select: none;
 }
 .image-list {
   display: flex;
