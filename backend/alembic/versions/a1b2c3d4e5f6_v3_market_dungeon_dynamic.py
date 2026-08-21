@@ -51,7 +51,7 @@ def upgrade() -> None:
     # 2. 数据迁移：items 三价格字段 -> market_observations
     conn = op.get_bind()
     base_id = conn.execute(
-        sa.text("SELECT base_currency_item_id FROM currency_systems WHERE is_active = 1 LIMIT 1")
+        sa.text("SELECT base_currency_item_id FROM currency_systems WHERE is_active = true LIMIT 1")
     ).scalar()
 
     def _insert_obs(item_id, otype, price_qty, observed_at, source, quantity=1):
