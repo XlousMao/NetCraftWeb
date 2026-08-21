@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 from typing import Optional
 
 from sqlalchemy import func, select
@@ -194,4 +194,157 @@ def analyze_dungeon_decision(db: Session, dungeon_id: int) -> dict:
         "profit_per_hour": float(q_money(profit_per_hour)),
         "recommendation": "farm" if avg_net > 0 else "avoid",
         "recommendation_text": "推荐刷此副本" if avg_net > 0 else "此副本平均亏损，建议直接购买掉落物",
+    }
+
+
+def analyze_crafting_plan(db: Session, item_id: int, target_quantity: int = 99) -> dict:
+    """制作采购方案：配方逆向拆解 + 材料按地点最低价采购 + 自制 vs 购买。
+
+    - 找到所有产出该物品的启用配方
+    - 按目标数量（默认一组 99）算所需合成次数（含成功率向上取整）
+    - 每个材料取 SELL_OFFER 按地点分组的最低出售价，推荐最便宜地点
+    - 汇总自制总成本，与直接购买对比给出推荐
+    """
+    from app.models.market import MarketObservation
+
+    vs = ValuationService(db)
+    item = db.get(Item, item_id)
+    if item is None:
+        return {"item_id": item_id, "error": "物品不存在"}
+
+    target = Decimal(str(target_quantity))
+
+    recipes = (
+        db.execute(
+            select(Recipe)
+            .join(RecipeOutput, RecipeOutput.recipe_id == Recipe.id)
+            .where(RecipeOutput.item_id == item_id, Recipe.is_active.is_(True))
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
+
+    def market_locations(iid: int) -> list[dict]:
+        """某物品按地点分组的最低出售挂单价（含时间戳），升序。"""
+        rows = (
+            db.execute(
+                select(MarketObservation)
+                .where(
+                    MarketObservation.item_id == iid,
+                    MarketObservation.observation_type == "SELL_OFFER",
+                )
+                .order_by(MarketObservation.observed_at.desc())
+            )
+            .scalars()
+            .all()
+        )
+        best_by_loc: dict[str, dict] = {}
+        for o in rows:
+            unit = vs._unit_price_to_base(o)
+            loc = o.location or "未知地点"
+            if loc not in best_by_loc or unit < best_by_loc[loc]["price"]:
+                best_by_loc[loc] = {
+                    "location": loc,
+                    "price": float(unit),
+                    "observed_at": o.observed_at.isoformat(),
+                }
+        return sorted(best_by_loc.values(), key=lambda x: x["price"])
+
+    plan = []
+    for r in recipes:
+        output_qty = sum(
+            (o.quantity for o in r.outputs if o.item_id == item_id), Decimal(0)
+        )
+        success_rate = Decimal(r.expected_success_rate or 1)
+        effective = output_qty * success_rate
+        craft_times = (
+            int((target / effective).to_integral_value(rounding=ROUND_CEILING))
+            if effective > 0
+            else 0
+        )
+
+        materials = []
+        total_cost = Decimal(0)
+        for m in r.materials:
+            total_required = Decimal(m.quantity) * craft_times
+            locs = market_locations(m.item_id)
+            if locs:
+                unit_price = Decimal(str(locs[0]["price"]))
+                best_location = locs[0]["location"]
+            else:
+                unit_price = vs.get_unit_price(m.item_id, "auto")[0]
+                best_location = None
+            mcost = unit_price * total_required
+            total_cost += mcost
+            m_item = db.get(Item, m.item_id)
+            materials.append(
+                {
+                    "item_id": m.item_id,
+                    "item_name": m_item.name if m_item else f"#{m.item_id}",
+                    "icon_url": m_item.icon_url if m_item else None,
+                    "per_craft": float(m.quantity),
+                    "total_required": float(total_required),
+                    "best_price": float(q_money(unit_price)),
+                    "best_location": best_location,
+                    "locations": locs,
+                    "total_cost": float(q_money(mcost)),
+                }
+            )
+
+        plan.append(
+            {
+                "recipe_id": r.id,
+                "recipe_name": r.name,
+                "recipe_type": r.recipe_type,
+                "success_rate": float(success_rate),
+                "output_quantity": float(output_qty),
+                "craft_times": craft_times,
+                "materials": materials,
+                "total_material_cost": float(q_money(total_cost)),
+            }
+        )
+
+    plan.sort(key=lambda x: x["total_material_cost"])
+
+    # 直接购买：目标物品按地点最低出售价
+    buy_locs = market_locations(item_id)
+    buy_best = buy_locs[0] if buy_locs else None
+    if buy_best:
+        buy_price = Decimal(str(buy_best["price"]))
+    else:
+        buy_price = vs.get_unit_price(item_id, "SELL_OFFER")[0]
+        if buy_price <= 0:
+            buy_price = vs.get_unit_price(item_id, "NPC_PRICE")[0]
+    buy_total = buy_price * target
+
+    best_recipe = plan[0] if plan else None
+    can_craft = best_recipe is not None
+    if not can_craft:
+        recommendation = "buy"
+        recommendation_text = "该物品暂无制作配方，只能直接购买"
+    elif buy_price <= 0:
+        recommendation = "craft"
+        recommendation_text = "暂无市场出售价，只能自己制作"
+    elif best_recipe["total_material_cost"] < float(buy_total):
+        diff = float(buy_total) - best_recipe["total_material_cost"]
+        recommendation = "craft"
+        recommendation_text = f"推荐自己制作，做 {int(target)} 个可节省 {round(diff, 2)} 钻石"
+    else:
+        diff = best_recipe["total_material_cost"] - float(buy_total)
+        recommendation = "buy"
+        recommendation_text = f"推荐直接购买，可节省 {round(diff, 2)} 钻石"
+
+    return {
+        "item_id": item_id,
+        "item_name": item.name,
+        "target_quantity": float(target),
+        "recipes": plan,
+        "best_recipe_id": best_recipe["recipe_id"] if best_recipe else None,
+        "buy_price": float(buy_price),
+        "buy_location": buy_best["location"] if buy_best else None,
+        "buy_locations": buy_locs,
+        "buy_total": float(q_money(buy_total)),
+        "recommendation": recommendation,
+        "recommendation_text": recommendation_text,
     }

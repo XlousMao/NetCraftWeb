@@ -39,6 +39,7 @@ function onRemove(e: Event) {
     <div class="thumb">
       <span v-if="!item.icon_url" class="thumb-placeholder">{{ item.name.slice(0, 1) }}</span>
       <img v-else :src="item.icon_url" :alt="item.name" />
+      <span v-if="item.craftable" class="craftable-badge">可合成</span>
       <div class="actions">
         <el-button size="small" circle @click="onEdit">✎</el-button>
         <el-button size="small" circle type="danger" @click="onRemove">×</el-button>
@@ -97,6 +98,16 @@ function onRemove(e: Event) {
   gap: 4px;
   opacity: 0;
   transition: opacity 0.2s;
+}
+.craftable-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 11px;
+  color: #fff;
+  background: #67c23a;
+  border-radius: 4px;
+  padding: 1px 6px;
 }
 .item-card:hover .actions {
   opacity: 1;

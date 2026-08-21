@@ -17,6 +17,7 @@ export interface Item {
   updated_at: string
   image_count: number
   relation_count: number
+  craftable: boolean
 }
 
 export interface Dungeon {

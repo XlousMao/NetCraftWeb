@@ -13,6 +13,8 @@ const item = ref<any>(null)
 const graph = ref<any>(null)
 const activeTab = ref('overview')
 const craftDecision = ref<any>(null)
+const craftingPlan = ref<any>(null)
+const targetQuantity = ref(99)
 
 const currency = ref<any>(null)
 
@@ -21,6 +23,7 @@ const marketForm = ref({
   quantity: 99,
   price_parts: {} as Record<string, number>,
   seller_name: '',
+  location: '',
   source: '',
 })
 
@@ -37,11 +40,22 @@ const OBS_TYPE_LABEL: Record<string, string> = {
   MANUAL_ESTIMATE: '手动估值',
 }
 
+const RECIPE_TYPE_LABEL: Record<string, string> = {
+  ALCHEMY: '炼金',
+  CRAFT: '制造',
+  SYNTHESIS: '合成',
+}
+
+function typeLabel(t: string) {
+  return RECIPE_TYPE_LABEL[t] || t
+}
+
 onMounted(async () => {
   await fetchItem()
   await fetchGraph()
   await fetchDecision()
   await fetchCurrency()
+  await fetchCraftingPlan()
 })
 
 async function fetchItem() {
@@ -57,6 +71,15 @@ async function fetchGraph() {
 async function fetchDecision() {
   const { data } = await analysisApi.craftVsBuy(itemId)
   craftDecision.value = data
+}
+
+async function fetchCraftingPlan() {
+  const { data } = await analysisApi.craftingPlan(itemId, targetQuantity.value)
+  craftingPlan.value = data
+}
+
+function onCraftingQuantityChange() {
+  fetchCraftingPlan()
 }
 
 async function fetchCurrency() {
@@ -157,6 +180,7 @@ function resetMarketForm() {
   marketForm.value.observation_type = 'SELL_OFFER'
   marketForm.value.quantity = 99
   marketForm.value.seller_name = ''
+  marketForm.value.location = ''
   marketForm.value.source = ''
   const parts: Record<string, number> = {}
   for (const d of denominations.value) parts[d.item_id] = 0
@@ -168,6 +192,7 @@ function openEditObs(row: any) {
   marketForm.value.observation_type = row.observation_type
   marketForm.value.quantity = row.quantity
   marketForm.value.seller_name = row.seller_name || ''
+  marketForm.value.location = row.location || ''
   marketForm.value.source = row.source || ''
   marketForm.value.price_parts = splitToDenominations(row.price_quantity)
 }
@@ -209,6 +234,7 @@ async function saveMarket() {
     price_item_id: baseId,
     price_quantity: totalDiamond.value,
     seller_name: marketForm.value.seller_name,
+    location: marketForm.value.location,
     source: marketForm.value.source,
   }
   if (editingObsId.value) {
@@ -316,7 +342,8 @@ function summary() {
             <span v-if="totalRmb != null" class="rmb">≈ {{ totalRmb.toFixed(3) }} RMB</span>
           </div>
           <div class="market-form">
-            <el-input v-model="marketForm.seller_name" placeholder="卖家/地点（可选）" style="width: 180px" />
+            <el-input v-model="marketForm.seller_name" placeholder="卖家（可选）" style="width: 150px" />
+            <el-input v-model="marketForm.location" placeholder="地点（可选）" style="width: 150px" />
             <el-input v-model="marketForm.source" placeholder="来源（可选）" style="width: 140px" />
             <el-tag v-if="editingObsId" type="warning" effect="plain">正在编辑记录 #{{ editingObsId }}</el-tag>
             <el-button type="primary" @click="saveMarket">{{ editingObsId ? '保存修改' : '记录' }}</el-button>
@@ -337,7 +364,8 @@ function summary() {
             <el-table-column label="单价(钻石/个)" width="120">
               <template #default="{ row }">{{ (row.price_quantity / row.quantity).toFixed(4) }}</template>
             </el-table-column>
-            <el-table-column prop="seller_name" label="卖家/地点" width="120" />
+            <el-table-column prop="seller_name" label="卖家" width="100" />
+            <el-table-column prop="location" label="地点" width="110" />
             <el-table-column prop="source" label="来源" />
             <el-table-column label="时间" width="180">
               <template #default="{ row }">{{ new Date(row.observed_at).toLocaleString() }}</template>
@@ -373,6 +401,84 @@ function summary() {
             </el-table>
           </div>
           <el-empty v-else description="暂无制作配方，只能直接购买" />
+        </el-tab-pane>
+
+        <el-tab-pane label="合成表" name="crafting">
+          <div v-if="craftingPlan && !craftingPlan.error">
+            <div class="crafting-toolbar">
+              <span class="lbl">制作数量</span>
+              <el-input-number v-model="targetQuantity" :min="1" :max="100000" @change="onCraftingQuantityChange" />
+              <el-tag
+                v-for="p in PRICE_PRESETS"
+                :key="p"
+                class="preset"
+                :type="targetQuantity === p ? 'primary' : 'info'"
+                effect="plain"
+                @click="targetQuantity = p; fetchCraftingPlan()"
+              >{{ p }}</el-tag>
+              <span class="lbl">个</span>
+            </div>
+            <el-alert
+              :type="craftingPlan.recommendation === 'craft' ? 'success' : 'info'"
+              :closable="false"
+              :title="craftingPlan.recommendation_text"
+              style="margin: 12px 0"
+            />
+            <el-descriptions :column="2" border>
+              <el-descriptions-item label="直接购买">
+                {{ craftingPlan.buy_price }} 钻石/个
+                <span v-if="craftingPlan.buy_location" class="text-muted">@{{ craftingPlan.buy_location }}</span>
+                · 共 <b>{{ craftingPlan.buy_total }}</b> 钻石
+              </el-descriptions-item>
+              <el-descriptions-item label="自制最低成本">
+                {{ craftingPlan.recipes?.length ? craftingPlan.recipes[0].total_material_cost : '—' }} 钻石
+              </el-descriptions-item>
+            </el-descriptions>
+
+            <div v-for="r in craftingPlan.recipes" :key="r.recipe_id" class="craft-recipe">
+              <div class="cr-head">
+                <b>{{ r.recipe_name }}</b>
+                <el-tag size="small" type="info" effect="plain">{{ typeLabel(r.recipe_type) }}</el-tag>
+                <span class="text-muted">产出 {{ r.output_quantity }}/次</span>
+                <span v-if="r.success_rate < 1" class="text-muted">成功率 {{ (r.success_rate * 100).toFixed(0) }}%</span>
+                <span class="text-muted">需合成 {{ r.craft_times }} 次</span>
+                <b class="cr-cost">{{ r.total_material_cost }} 钻石</b>
+              </div>
+              <el-table :data="r.materials" size="small" style="margin-top: 8px">
+                <el-table-column label="材料" min-width="160">
+                  <template #default="{ row }">
+                    <div class="mat-name">
+                      <img v-if="row.icon_url" :src="row.icon_url" class="mat-icon" />
+                      <span v-else class="mat-ph">{{ (row.item_name || '?').slice(0, 1) }}</span>
+                      <span>{{ row.item_name }}</span>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="per_craft" label="单次" width="70" />
+                <el-table-column prop="total_required" label="总需求" width="80" />
+                <el-table-column label="最低价" width="110">
+                  <template #default="{ row }">{{ row.best_price }} 钻石</template>
+                </el-table-column>
+                <el-table-column label="购买地点" width="180">
+                  <template #default="{ row }">
+                    <el-tooltip v-if="row.locations?.length" placement="top">
+                      <template #content>
+                        <div v-for="loc in row.locations" :key="loc.location">
+                          {{ loc.location }}：{{ loc.price }} 钻石（{{ new Date(loc.observed_at).toLocaleDateString() }}）
+                        </div>
+                      </template>
+                      <span class="loc-best">📍 {{ row.best_location }}</span>
+                    </el-tooltip>
+                    <span v-else class="text-muted">无出售挂单</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="总成本" width="110">
+                  <template #default="{ row }">{{ row.total_cost }} 钻石</template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </div>
+          <el-empty v-else description="该物品暂无可制作配方" />
         </el-tab-pane>
 
         <el-tab-pane label="图片" name="images">
@@ -534,5 +640,59 @@ function summary() {
   object-fit: contain;
   border: 1px solid #eef0f3;
   border-radius: 6px;
+}
+.crafting-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.crafting-toolbar .preset {
+  cursor: pointer;
+  user-select: none;
+}
+.craft-recipe {
+  margin-top: 20px;
+  padding: 12px;
+  border: 1px solid #eef0f3;
+  border-radius: 8px;
+}
+.cr-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cr-cost {
+  margin-left: auto;
+  color: #e6a23c;
+}
+.mat-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mat-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #f5f6f7;
+}
+.mat-ph {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: #f5f6f7;
+  color: #c0c4cc;
+  font-size: 12px;
+  font-weight: 600;
+}
+.loc-best {
+  color: #67c23a;
+  font-weight: 600;
+  cursor: pointer;
 }
 </style>

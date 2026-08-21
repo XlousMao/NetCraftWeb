@@ -84,6 +84,13 @@ def dungeon_decision(dungeon_id: int = Query(...), db: Session = Depends(get_db)
     return analyze_dungeon_decision(db, dungeon_id)
 
 
+@router.get("/crafting-plan", response_model=dict)
+def crafting_plan(item_id: int = Query(...), target_quantity: int = Query(99, ge=1, le=100000), db: Session = Depends(get_db)):
+    from app.analysis.decision import analyze_crafting_plan
+
+    return analyze_crafting_plan(db, item_id, target_quantity)
+
+
 # ---- 导出 ----
 
 def _rows_to_csv(headers: list[str], rows: list[list]) -> StreamingResponse:

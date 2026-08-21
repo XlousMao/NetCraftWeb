@@ -33,6 +33,18 @@ router = APIRouter(prefix="/items", tags=["items"])
 def _item_out(db: Session, item: Item) -> ItemOut:
     img, rel = ItemRepository(db).with_counts(item.id)
     roles = [r.role for r in item.roles]
+    craftable = (
+        db.execute(
+            select(ItemRelation.id)
+            .where(
+                ItemRelation.relation_type == "PRODUCES",
+                ItemRelation.source_type == "recipe",
+                ItemRelation.target_item_id == item.id,
+            )
+            .limit(1)
+        ).first()
+        is not None
+    )
     return ItemOut(
         id=item.id,
         name=item.name,
@@ -52,6 +64,7 @@ def _item_out(db: Session, item: Item) -> ItemOut:
         updated_at=item.updated_at,
         image_count=img,
         relation_count=rel,
+        craftable=craftable,
     )
 
 

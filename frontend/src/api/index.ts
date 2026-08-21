@@ -89,6 +89,8 @@ export const analysisApi = {
   activityEfficiency: (params: any) => client.get('/analysis/activity-efficiency', { params }),
   value: (data: any) => client.post('/analysis/value', data),
   craftVsBuy: (itemId: number) => client.get('/analysis/craft-vs-buy', { params: { item_id: itemId } }),
+  craftingPlan: (itemId: number, targetQuantity = 99) =>
+    client.get('/analysis/crafting-plan', { params: { item_id: itemId, target_quantity: targetQuantity } }),
   recipeDecision: (recipeId: number) => client.get('/analysis/recipe-decision', { params: { recipe_id: recipeId } }),
   dungeonDecision: (dungeonId: number) => client.get('/analysis/dungeon-decision', { params: { dungeon_id: dungeonId } }),
 }

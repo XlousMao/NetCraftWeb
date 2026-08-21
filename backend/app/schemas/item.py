@@ -50,6 +50,7 @@ class ItemOut(ItemBase):
     updated_at: datetime
     image_count: int = 0
     relation_count: int = 0
+    craftable: bool = False
 
 
 class ItemImageOut(BaseModel):
