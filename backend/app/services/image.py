@@ -99,6 +99,12 @@ class ImageService:
             height=height,
         )
         self.db.add(image)
+        
+        if is_primary:
+            item = self.db.get(Item, item_id)
+            if item:
+                item.icon_url = f"/storage/{rel_path}"
+
         self.db.flush()
         return image
 
@@ -112,5 +118,10 @@ class ImageService:
             .values(is_primary=False)
         )
         image.is_primary = True
+        
+        item = self.db.get(Item, item_id)
+        if item:
+            item.icon_url = f"/storage/{image.file_path}"
+            
         self.db.flush()
         return image

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { dungeonRunApi, dungeonApi, itemApi, equipmentApi } from '@/api'
 
 const runs = ref<any[]>([])
 const dungeons = ref<any[]>([])
+const activeDungeons = computed(() => dungeons.value.filter(d => d.is_active))
 const items = ref<any[]>([])
 const equipments = ref<any[]>([])
 const total = ref(0)
@@ -148,7 +149,7 @@ function resetForm() {
           <el-col :span="12">
             <el-form-item label="副本" required>
               <el-select v-model="form.dungeon_id" style="width: 100%">
-                <el-option v-for="d in dungeons" :key="d.id" :label="d.name" :value="d.id" />
+                <el-option v-for="d in activeDungeons" :key="d.id" :label="d.name" :value="d.id" />
               </el-select>
             </el-form-item>
           </el-col>

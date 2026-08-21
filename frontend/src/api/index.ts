@@ -24,7 +24,8 @@ export const itemApi = {
 
 // ---- Dungeons ----
 export const dungeonApi = {
-  list: () => client.get('/dungeons'),
+  list: (includeInactive = false) =>
+    client.get('/dungeons', { params: { include_inactive: includeInactive } }),
   create: (data: any) => client.post('/dungeons', data),
   get: (id: number) => client.get(`/dungeons/${id}`),
   update: (id: number, data: any) => client.patch(`/dungeons/${id}`, data),

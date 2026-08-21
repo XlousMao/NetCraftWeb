@@ -26,8 +26,12 @@ run_router = APIRouter(prefix="/dungeon-runs", tags=["dungeon-runs"])
 
 
 @dungeon_router.get("", response_model=dict)
-def list_dungeons(db: Session = Depends(get_db)):
-    rows = db.execute(select(Dungeon).order_by(Dungeon.name)).scalars().all()
+def list_dungeons(include_inactive: bool = Query(False), db: Session = Depends(get_db)):
+    """副本列表。默认只返回启用副本；include_inactive=true 返回全部（管理页用）。"""
+    stmt = select(Dungeon).order_by(Dungeon.name)
+    if not include_inactive:
+        stmt = stmt.where(Dungeon.is_active.is_(True))
+    rows = db.execute(stmt).scalars().all()
     return {"total": len(rows), "items": [DungeonOut.model_validate(d).model_dump() for d in rows]}
 
 

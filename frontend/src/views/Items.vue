@@ -18,6 +18,7 @@ const pageSize = 20
 
 const dialogVisible = ref(false)
 const form = ref({ name: '', category: '材料', vendor_buy_price: null as number | null, market_price: null as number | null, description: '' })
+const selectedFile = ref<File | null>(null)
 
 async function fetch() {
   loading.value = true
@@ -42,15 +43,38 @@ async function fetchCategories() {
   categories.value = data
 }
 
+function handleFileChange(e: Event) {
+  const target = e.target as HTMLInputElement
+  if (target.files && target.files.length > 0) {
+    selectedFile.value = target.files[0]
+  } else {
+    selectedFile.value = null
+  }
+}
+
 async function createItem() {
   if (!form.value.name.trim()) {
     ElMessage.warning('请输入物品名称')
     return
   }
-  await itemApi.create(form.value)
-  ElMessage.success('物品已创建，可前往详情上传图片')
+  const { data: item } = await itemApi.create(form.value)
+  
+  if (selectedFile.value) {
+    try {
+      const formData = new FormData()
+      formData.append('file', selectedFile.value)
+      await itemApi.uploadImage(item.id, formData)
+      ElMessage.success('物品创建并上传图片成功')
+    } catch (e) {
+      ElMessage.warning('物品已创建，但图片上传失败')
+    }
+  } else {
+    ElMessage.success('物品已创建，可前往详情上传图片')
+  }
+
   dialogVisible.value = false
   form.value = { name: '', category: '材料', vendor_buy_price: null, market_price: null, description: '' }
+  selectedFile.value = null
   fetch()
 }
 
@@ -118,6 +142,9 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="市场价格">
           <el-input-number v-model="form.market_price" :min="0" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="图片(可选)">
+          <input type="file" accept="image/*" @change="handleFileChange" style="width: 100%" />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" />
