@@ -1,0 +1,8 @@
+# 统一换行符：shell 脚本强制 LF，其余交给 git 自动处理
+*.sh text eol=lf
+*.py text eol=lf
+*.ts text eol=lf
+*.vue text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
