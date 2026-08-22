@@ -197,7 +197,13 @@ async function remove(row: any) {
       <el-table-column label="掉落物" min-width="220">
         <template #default="{ row }">
           <div class="loot-imgs">
-            <el-tooltip v-for="l in (row.loots || [])" :key="l.id" :content="`${l.item_name} ×${l.quantity}`" placement="top">
+            <el-tooltip v-for="l in (row.loots || [])" :key="l.id" placement="top">
+              <template #content>
+                <div class="loot-tip">
+                  <div class="lt-name">{{ l.item_name }} ×{{ l.quantity }}</div>
+                  <div class="lt-value">价值 {{ l.base_currency_value }} 钻石</div>
+                </div>
+              </template>
               <div class="loot-img-wrap">
                 <img v-if="l.icon_url" :src="l.icon_url" class="loot-img" />
                 <span v-else class="loot-ph">{{ (l.item_name || '?').slice(0, 1) }}</span>
@@ -510,6 +516,19 @@ async function remove(row: any) {
   margin-top: 8px;
   padding-top: 6px;
   border-top: 1px solid #e4e7ed;
+  font-weight: 600;
+  color: #e6a23c;
+}
+.loot-tip {
+  text-align: center;
+  padding: 2px 4px;
+}
+.lt-name {
+  color: #606266;
+  font-size: 12px;
+}
+.lt-value {
+  margin-top: 2px;
   font-weight: 600;
   color: #e6a23c;
 }
