@@ -21,8 +21,10 @@ from app.services.currency import CurrencyService, q_money
 from app.services.fiat import FiatService
 
 # auto 估值优先级（第一个有值即用）：
-# 手动估值最可信；商人定价(NPC)稳定；出售挂单(SELL_OFFER)作为市场价参考
-AUTO_ORDER = ("MANUAL_ESTIMATE", "NPC_PRICE", "SELL_OFFER")
+# 手动估值最可信；商人定价(NPC)稳定；出售挂单(SELL_OFFER)作为市场卖出价；
+# 收购订单(BUY_ORDER)作为最后的兜底——收购价通常低于出售价，但它是可真实兑现的价格，
+# 远好于「无价即 0」。注意：收购价口径偏保守，展示时应标注来源。
+AUTO_ORDER = ("MANUAL_ESTIMATE", "NPC_PRICE", "SELL_OFFER", "BUY_ORDER")
 
 # 旧 policy 别名（兼容历史调用）
 POLICY_ALIAS = {

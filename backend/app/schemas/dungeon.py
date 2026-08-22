@@ -76,6 +76,7 @@ class LootOut(BaseModel):
     icon_url: Optional[str] = None
     quantity: float
     base_currency_value: float = 0.0
+    valuation_source: Optional[str] = None
 
 
 class ConsumptionOut(BaseModel):
@@ -88,6 +89,7 @@ class ConsumptionOut(BaseModel):
     icon_url: Optional[str] = None
     quantity: float
     base_currency_value: float = 0.0
+    valuation_source: Optional[str] = None
 
 
 class RepairOut(BaseModel):
@@ -100,6 +102,7 @@ class RepairOut(BaseModel):
     item_name: Optional[str] = None
     quantity: float
     base_currency_value: float = 0.0
+    valuation_source: Optional[str] = None
 
 
 class DungeonRunOut(BaseModel):

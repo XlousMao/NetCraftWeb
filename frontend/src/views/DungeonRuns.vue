@@ -122,6 +122,20 @@ function itemIcon(id: number) {
   return items.value.find((i) => i.id === id)?.icon_url || null
 }
 
+// 估值来源 → 中文口径（用于掉落物悬浮标注价格类型）
+const SOURCE_LABEL: Record<string, string> = {
+  SELL_OFFER: '出售价',
+  BUY_ORDER: '收购价',
+  NPC_PRICE: '商人价',
+  MANUAL_ESTIMATE: '手动估值',
+}
+function sourceLabel(src?: string) {
+  if (!src || src === 'none') return ''
+  if (src === 'currency') return '货币面额'
+  const type = src.split(':')[0]
+  return SOURCE_LABEL[type] || ''
+}
+
 function resetForm() {
   editingId.value = null
   form.value = {
@@ -202,6 +216,7 @@ async function remove(row: any) {
                 <div class="loot-tip">
                   <div class="lt-name">{{ l.item_name }} ×{{ l.quantity }}</div>
                   <div class="lt-value">价值 {{ l.base_currency_value }} 钻石</div>
+                  <div v-if="sourceLabel(l.valuation_source)" class="lt-src">{{ sourceLabel(l.valuation_source) }}</div>
                 </div>
               </template>
               <div class="loot-img-wrap">
@@ -531,5 +546,10 @@ async function remove(row: any) {
   margin-top: 2px;
   font-weight: 600;
   color: #e6a23c;
+}
+.lt-src {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #909399;
 }
 </style>
