@@ -211,13 +211,58 @@ async function remove(row: any) {
       <el-table-column label="时间" width="160">
         <template #default="{ row }">{{ new Date(row.started_at).toLocaleString() }}</template>
       </el-table-column>
-      <el-table-column prop="gross_value" label="掉落价值(钻石)" width="120" />
+      <el-table-column label="掉落价值(钻石)" width="120">
+        <template #default="{ row }">
+          <el-tooltip placement="top" :disabled="!row.loots?.length">
+            <template #content>
+              <div class="value-tip">
+                <div class="vt-title">掉落明细</div>
+                <div v-for="l in row.loots" :key="l.id" class="vt-row">
+                  <span>{{ l.item_name }} ×{{ l.quantity }}</span>
+                  <b>{{ l.base_currency_value.toFixed(0) }}</b>
+                </div>
+                <div class="vt-total">合计 {{ row.gross_value.toLocaleString() }} 钻石</div>
+              </div>
+            </template>
+            <span class="cell-link">{{ row.gross_value.toLocaleString() }}</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
       <el-table-column prop="repair_cost" label="维修" width="90" />
       <el-table-column prop="consumable_cost" label="消耗" width="90" />
       <el-table-column prop="total_cost" label="总成本" width="100" />
       <el-table-column label="净利润" width="130">
         <template #default="{ row }">
-          <span :class="row.net_profit >= 0 ? 'profit' : 'loss'">{{ row.net_profit.toLocaleString() }}</span>
+          <el-tooltip placement="top">
+            <template #content>
+              <div class="value-tip">
+                <div class="vt-title">收益明细</div>
+                <template v-if="row.loots?.length">
+                  <div class="vt-group">掉落 +{{ row.gross_value.toLocaleString() }}</div>
+                  <div v-for="l in row.loots" :key="'l' + l.id" class="vt-row sub">
+                    <span>{{ l.item_name }} ×{{ l.quantity }}</span>
+                    <b>{{ l.base_currency_value.toFixed(0) }}</b>
+                  </div>
+                </template>
+                <template v-if="row.repairs?.length">
+                  <div class="vt-group">维修 -{{ row.repair_cost.toLocaleString() }}</div>
+                  <div v-for="r in row.repairs" :key="'r' + r.id" class="vt-row sub">
+                    <span>{{ r.item_name }} ×{{ r.quantity }}</span>
+                    <b>{{ r.base_currency_value.toFixed(0) }}</b>
+                  </div>
+                </template>
+                <template v-if="row.consumptions?.length">
+                  <div class="vt-group">消耗 -{{ row.consumable_cost.toLocaleString() }}</div>
+                  <div v-for="c in row.consumptions" :key="'c' + c.id" class="vt-row sub">
+                    <span>{{ c.item_name }} ×{{ c.quantity }}</span>
+                    <b>{{ c.base_currency_value.toFixed(0) }}</b>
+                  </div>
+                </template>
+                <div class="vt-total">净利润 {{ row.net_profit.toLocaleString() }} 钻石</div>
+              </div>
+            </template>
+            <span :class="row.net_profit >= 0 ? 'profit' : 'loss'">{{ row.net_profit.toLocaleString() }}</span>
+          </el-tooltip>
           <div v-if="row.net_profit_fiat != null" class="text-muted">≈ {{ row.net_profit_fiat.toFixed(2) }} RMB</div>
         </template>
       </el-table-column>
@@ -429,5 +474,43 @@ async function remove(row: any) {
   border-radius: 8px;
   padding: 0 4px;
   line-height: 14px;
+}
+.cell-link {
+  cursor: help;
+  border-bottom: 1px dashed #c0c4cc;
+}
+.value-tip {
+  min-width: 180px;
+  max-width: 300px;
+}
+.vt-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.vt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  line-height: 20px;
+  color: #606266;
+}
+.vt-row.sub {
+  padding-left: 10px;
+  color: #909399;
+}
+.vt-row b {
+  color: #303133;
+}
+.vt-group {
+  margin-top: 6px;
+  font-weight: 600;
+  color: #303133;
+}
+.vt-total {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #e4e7ed;
+  font-weight: 600;
+  color: #e6a23c;
 }
 </style>

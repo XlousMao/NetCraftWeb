@@ -82,23 +82,30 @@ def delete_dungeon(dungeon_id: int, db: Session = Depends(get_db)):
 def _run_out(db: Session, run: DungeonRun) -> DungeonRunOut:
     from app.analysis.service import compute_run_economy
     from app.schemas.dungeon import ConsumptionOut, LootOut, RepairOut
+    from app.services.valuation import ValuationService
+
+    vs = ValuationService(db)
+    t = run.started_at
 
     loots = []
     for l in run.loots:
         lo = LootOut.model_validate(l)
         lo.item_name = l.item.name if l.item else None
         lo.icon_url = l.item.icon_url if l.item else None
+        lo.base_currency_value = float(vs.value(l.item_id, l.quantity, "auto", t).base_currency_value)
         loots.append(lo)
     consumptions = []
     for c in run.consumptions:
         co = ConsumptionOut.model_validate(c)
         co.item_name = c.item.name if c.item else None
         co.icon_url = c.item.icon_url if c.item else None
+        co.base_currency_value = float(vs.value(c.item_id, c.quantity, "auto", t).base_currency_value)
         consumptions.append(co)
     repairs = []
     for r in run.repairs:
         ro = RepairOut.model_validate(r)
         ro.item_name = r.item.name if r.item else None
+        ro.base_currency_value = float(vs.value(r.item_id, r.quantity, "auto", t).base_currency_value)
         repairs.append(ro)
     out = DungeonRunOut.model_validate(run)
     out.dungeon_name = run.dungeon.name if run.dungeon else None
